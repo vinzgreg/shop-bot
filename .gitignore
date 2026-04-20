@@ -1,4 +1,5 @@
 config/config.toml
+config.toml
 data/
 __pycache__/
 *.pyc

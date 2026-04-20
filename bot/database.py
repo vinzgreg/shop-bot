@@ -16,7 +16,7 @@ from typing import Generator, Optional
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path("/app/data/shop.db")
+DB_PATH = Path("/app/data/shop/shop.db")
 
 
 # ── Connection helper ─────────────────────────────────────────────────────────

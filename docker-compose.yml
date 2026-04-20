@@ -4,4 +4,4 @@ services:
     restart: unless-stopped
     volumes:
       - ./config:/app/config:ro   # config.toml (read-only)
-      - ./data:/app/data           # SQLite database (persistent)
+      - ./data/shop:/app/data/shop  # SQLite database (persistent)
