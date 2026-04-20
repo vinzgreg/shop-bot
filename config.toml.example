@@ -1,0 +1,45 @@
+# Shop bot configuration
+# Copy this file to config/config.toml and fill in your values.
+# config/config.toml is listed in .gitignore and must never be committed.
+
+[mastodon]
+# Full URL of your Mastodon instance (no trailing slash)
+instance_url = "https://mastodon.social"
+
+# OAuth access token for the bot account.
+# Obtain via: Mastodon settings → Development → New application → access token
+access_token = "your_access_token_here"
+
+
+[bot]
+# Default time for reminders when the user does not specify one (HH:MM, 24-hour)
+default_reminder_time = "07:30"
+
+# IANA timezone used for reminder scheduling and display
+# See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+timezone = "Europe/Berlin"
+
+# Log verbosity: DEBUG | INFO | WARNING | ERROR
+log_level = "INFO"
+
+# Who may send commands to the bot.
+# "everyone"       — any Mastodon account that can DM the bot
+# "followers_only" — only accounts that follow the bot
+access = "everyone"
+
+
+[aliases]
+# Localised command aliases.  Set these to any language you prefer.
+# The bot accepts both the English keyword and the alias interchangeably.
+#
+# Default values are German.
+
+list             = "liste"          # /list      → /liste
+remove           = "streiche"       # /remove    → /streiche
+update           = "aktualisiere"   # /update    → /aktualisiere
+reminder         = "erinnerung"     # /reminder  → /erinnerung
+reminder_list    = "liste"          # /reminder list   → /erinnerung liste
+reminder_delete  = "loesche"        # /reminder delete → /erinnerung loesche
+reminder_all     = "alle"           # delete all       → alle
+undo             = "undo"           # /undo stays the same in German
+help             = "hilfe"          # /help      → /hilfe

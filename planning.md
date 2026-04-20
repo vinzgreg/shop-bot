@@ -14,6 +14,8 @@ reminders. All interaction happens via DM using a simple command syntax.
 - The bot replies to every command with a confirmation or the requested output.
 - Commands are case-insensitive.
 - Unrecognised messages are treated as items to add to the shopping list.
+- Replies to users are DMs too, so they are not public.
+- Reminders are sent as public posts
 
 ---
 
@@ -131,7 +133,7 @@ English keyword.
 | `/reminder list`        | `/erinnerung liste`      |
 | `/reminder delete`      | `/erinnerung loesche`    |
 | `/reminder delete all`  | `/erinnerung alle`       |
-| `/undo`                 | `/rueckgaengig`          |
+| `/undo`                 | `/undo`          |
 | `/help`                 | `/hilfe`                 |
 
 ---
@@ -146,40 +148,14 @@ Replies with a brief list of all available commands.
 
 ---
 
-## Configuration file
-
-Format: TOML (human-friendly, supports comments).
-
-```toml
-[mastodon]
-instance_url   = "https://mastodon.social"
-access_token   = "your_access_token_here"
-
-[bot]
-default_reminder_time = "07:30"   # HH:MM, 24-hour
-timezone              = "Europe/Berlin"
-
-[aliases]
-# Override any default alias here.
-# Format: english_keyword = "alias"
-list             = "liste"
-remove           = "streiche"
-reminder         = "erinnerung"
-reminder_list    = "liste"         # sub-command of /reminder
-reminder_delete  = "loesche"       # sub-command of /reminder
-reminder_all     = "alle"          # for /reminder delete all
-undo             = "rueckgaengig"
-help             = "hilfe"
-```
-
----
-
 ## Storage
 
 - **Backend**: SQLite with WAL mode and foreign key enforcement.
 - **Shopping list**: shared across all users (one global list).
 - **Reminders**: global, visible and manageable by any user.
 - **Undo state**: per-user, stores the inverse of the last action.
+- Each line-item and reminder, every row knows an ‘inserted’ date/time
+- Track interactions in a log in the DB with timestamp and user (identified by handler)
 
 ---
 
@@ -192,9 +168,69 @@ help             = "hilfe"
 | Scheduler       | `APScheduler` (in-process)          |
 | Storage         | SQLite via `sqlite3` stdlib         |
 | Config          | `tomllib` (stdlib, Python 3.11+)    |
-| Deployment      | Single long-running process         |
+| Deployment      | Docker container                    |
 
 Mastodon DM listening: streaming API preferred; polling as fallback.
+
+---
+
+## Docker
+
+The app ships as a single Docker image.
+
+### Image
+
+- Base: `python:3.12-slim`
+- Runs as a non-root user (`appuser`)
+- No listening ports (outbound-only process)
+
+### Volumes
+
+Two host-mounted volumes are required:
+
+| Mount point        | Purpose                                 |
+|--------------------|-----------------------------------------|
+| `/app/config`      | Contains `config.toml` (read-only)      |
+| `/app/data`        | Persists the SQLite database file       |
+
+### `docker-compose.yml` (example)
+
+```yaml
+services:
+  shop-bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+```
+
+### Configuration via file
+
+The bot reads `/app/config/config.toml` on startup. The access token and
+instance URL live there — never in environment variables or the image itself.
+An annotated `config.toml.example` is committed to the repository; the real
+`config.toml` is listed in `.gitignore`.
+
+```toml
+[mastodon]
+instance_url = "https://mastodon.social"   # URL of your Mastodon instance
+access_token = "your_access_token_here"    # bot account OAuth access token
+
+[bot]
+default_reminder_time = "07:30"   # HH:MM, 24-hour clock
+timezone              = "Europe/Berlin"
+
+[aliases]
+list             = "liste"
+remove           = "streiche"
+reminder         = "erinnerung"
+reminder_list    = "liste"
+reminder_delete  = "loesche"
+reminder_all     = "alle"
+undo             = "rueckgaengig"
+help             = "hilfe"
+```
 
 ---
 
@@ -207,49 +243,61 @@ answers before implementation begins:
 Is the shopping list shared by everyone who DMs the bot (one household list),
 or does each user have their own private list? The reminder phrasing
 "reminding everyone listening" suggests a shared model.
+Answer: Shared by everyone listening to the bot. So “@shop /list” would return the full global list.
 
 ### 2. Who receives reminder notifications?
 When a reminder fires, where does the bot post it?
 - DM back to the user who created it?
 - DM to all users who have ever interacted with the bot?
 - A public toot or followers-only toot on the bot account?
+Answer: Reminders are sent to everyone, public post. But commands like “@shop /reminder list” only as a DM to person asking.
 
 ### 3. Timezone
 Whose timezone is used for reminder scheduling — the bot server's, or a
 configurable value? (The config above proposes a configurable `timezone`.)
+Answer: Timezone, Berlin as standard.
 
 ### 4. Duplicate items on the shopping list
 If a user adds "apple" when "apple" is already on the list:
 - Accept the duplicate (two rows)?
 - Reject and notify?
 - Increment a quantity?
+Answer: increment by 1
 
 ### 5. Quantities and free-text items
 Can items include quantities (e.g. "2 apples", "500g flour")? If so, is
 "apple" and "2 apples" the same item for the purpose of `/remove apple`?
+Answer: Yes. Items have a quantity attribute which is optional. If used, like “@shop 1 apple” extract the number or unit like “@shop 500g sugar”, extract 500g into the attribute quantity. If an identical item is added, count up.
+There is a command to adjust quantity of an item being on the list already: “@shop /update 4 apple” would replace 2 units of apple with 4.
 
 ### 6. Access control
 Can any Mastodon account DM the bot, or is access restricted to a whitelist
 of accounts?
+Answer: Default everyone (“access = everyone”), but if configured as “access = “follower only”, everyone who follows the bot can access.
 
 ### 7. Undo depth
 Is undo limited to exactly **one** level (last command only), or should a
 full undo stack be supported?
+Answer: just the last.
 
 ### 8. Bot response language
 Are bot replies always in English, or should they follow the configured alias
 language (e.g. replies in German when aliases are German)?
+Answer: English
 
 ### 9. Reminder recurrence
 Are reminders one-shot (fire once, then gone), or can they repeat
 (daily/weekly)? Not mentioned in spec.
+Answer: Once
 
 ### 10. Error reply behaviour
 What should the bot reply when:
 - A `/remove` target doesn't exist?
 - A reminder date is in the past?
 - A command is completely unrecognised?
+Answer: Reply with a DM with an error-message
 
 ### 11. `/remove` by name — partial match?
 If the list has "apple" and "apple juice", does `/remove apple` remove the
 first exact match, or refuse because it's ambiguous?
+Answer: first exact match

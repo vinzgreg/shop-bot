@@ -1,0 +1,7 @@
+services:
+  shop-bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro   # config.toml (read-only)
+      - ./data:/app/data           # SQLite database (persistent)
