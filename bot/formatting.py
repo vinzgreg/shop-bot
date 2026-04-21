@@ -83,7 +83,7 @@ def _render_three_col(
 
 
 def _code_block(lines: list[str]) -> str:
-    return "```\n" + "\n".join(lines) + "\n```"
+    return "<pre>" + "\n".join(lines) + "</pre>"
 
 
 def _parse_utc(iso_str: str) -> datetime:

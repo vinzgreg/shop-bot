@@ -10,7 +10,7 @@ class TestFormatItemTable:
     def test_single_item_no_quantity(self):
         items = [{"id": 1, "name": "milk", "quantity": None, "quantity_unit": None}]
         result = format_item_table(items)
-        assert "```" in result
+        assert "<pre>" in result
         assert "milk" in result
         assert "1" in result
         # No Qty column when no quantities
@@ -59,7 +59,7 @@ class TestFormatReminderTable:
         result = format_reminder_table(reminders, tz)
         assert "buy cake" in result
         assert "2026-05-01" in result
-        assert "```" in result
+        assert "<pre>" in result
 
     def test_utc_to_local_conversion(self):
         reminders = [{
