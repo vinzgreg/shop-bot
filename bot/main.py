@@ -131,7 +131,10 @@ def run() -> None:
     # ── Main loop ─────────────────────────────────────────────────────────────
     logger.info("Bot ready — listening for DMs")
     try:
-        client.listen(on_dm)
+        client.listen(
+            on_dm,
+            get_last_seen_id=lambda: get_kv(LAST_NOTIFICATION_KEY, DB_PATH),
+        )
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt — shutting down")
     except Exception:

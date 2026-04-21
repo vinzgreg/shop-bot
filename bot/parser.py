@@ -28,6 +28,19 @@ _REMINDER_DATE = re.compile(
     re.DOTALL,
 )
 
+# Numeric range used in /remove: "2-4" → items 2, 3, 4.  Matches only purely
+# numeric bounds so names that happen to contain hyphens are left untouched.
+_REMOVE_RANGE = re.compile(r"^(\d+)\s*-\s*(\d+)$")
+
+
+@dataclass
+class Item:
+    """A single shopping-list item parsed from free text."""
+
+    name: str
+    quantity: Optional[int] = None
+    unit: Optional[str] = None
+
 
 @dataclass
 class ParsedCommand:
@@ -37,16 +50,17 @@ class ParsedCommand:
                   #         reminder_list | reminder_delete | reminder_delete_all |
                   #         undo | help | unknown
 
-    # --- add / update fields ---
-    item_name: Optional[str] = None
-    item_quantity: Optional[int] = None
-    item_quantity_unit: Optional[str] = None
-
-    # --- remove fields ---
-    remove_target: Optional[str] = None    # numeric string or item name
+    # --- add fields ---
+    items: list[Item] = field(default_factory=list)
 
     # --- update fields ---
+    item_name: Optional[str] = None
     update_quantity: Optional[int] = None
+
+    # --- remove fields ---
+    # List of targets, each either a numeric position ("3") or an item name.
+    # Ranges like "2-4" are expanded during parsing to ["2", "3", "4"].
+    remove_targets: list[str] = field(default_factory=list)
 
     # --- reminder fields ---
     reminder_date: Optional[str] = None    # YYYY-MM-DD
@@ -83,9 +97,20 @@ def parse(text: str, aliases) -> ParsedCommand:
     if lower == "/undo":
         return ParsedCommand(command="undo", raw_text=text)
 
-    if lower.startswith("/remove "):
-        target = text[len("/remove "):].strip()
-        return ParsedCommand(command="remove", remove_target=target, raw_text=text)
+    if lower == "/remove" or lower.startswith("/remove "):
+        rest = text[len("/remove "):].strip()
+        if not rest:
+            return ParsedCommand(command="unknown", raw_text=text)
+        targets = _expand_remove_targets(rest)
+        return ParsedCommand(command="remove", remove_targets=targets, raw_text=text)
+
+    if lower == "/delete":
+        return ParsedCommand(command="clear", raw_text=text)
+
+    if lower.startswith("/delete "):
+        rest = text[len("/delete "):].strip()
+        targets = _expand_remove_targets(rest)
+        return ParsedCommand(command="remove", remove_targets=targets, raw_text=text)
 
     if lower.startswith("/update "):
         return _parse_update(text)
@@ -93,15 +118,20 @@ def parse(text: str, aliases) -> ParsedCommand:
     if lower.startswith("/reminder"):
         return _parse_reminder(text, aliases)
 
-    # No command prefix → treat as an item to add to the shopping list.
-    name, quantity, unit = _parse_item_text(text)
-    return ParsedCommand(
-        command="add",
-        item_name=name,
-        item_quantity=quantity,
-        item_quantity_unit=unit,
-        raw_text=text,
-    )
+    # No command prefix → treat as one or more items to add. A comma in the
+    # message splits it into separate line items ("500g sugar, 3 apple" →
+    # two adds), so shoppers can queue a whole list in one DM.
+    items: list[Item] = []
+    for piece in text.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        name, qty, unit = _parse_item_text(piece)
+        items.append(Item(name=name, quantity=qty, unit=unit))
+
+    if not items:
+        return ParsedCommand(command="unknown", raw_text=text)
+    return ParsedCommand(command="add", items=items, raw_text=text)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -129,6 +159,30 @@ def _resolve_aliases(text: str, aliases) -> str:
                 logger.debug("Alias '%s' → '%s'", alias, english)
             return rewritten
     return text
+
+
+def _expand_remove_targets(rest: str) -> list[str]:
+    """
+    Split a '/remove' argument list into individual target tokens.
+
+    Accepts comma-separated entries where each entry is either a single
+    position number, a numeric range like "2-4", or an item name.  Ranges
+    are expanded in-order; an inverted range ("5-3") is silently swapped.
+    """
+    out: list[str] = []
+    for piece in rest.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        m = _REMOVE_RANGE.match(piece)
+        if m:
+            start, end = int(m.group(1)), int(m.group(2))
+            if start > end:
+                start, end = end, start
+            out.extend(str(n) for n in range(start, end + 1))
+        else:
+            out.append(piece)
+    return out
 
 
 def _parse_update(text: str) -> ParsedCommand:

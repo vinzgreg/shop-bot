@@ -35,6 +35,7 @@ def handle(
         "add":                 _add,
         "list":                _list,
         "remove":              _remove,
+        "clear":               _clear,
         "update":              _update,
         "reminder_add":        _reminder_add,
         "reminder_list":       _reminder_list,
@@ -58,12 +59,22 @@ def handle(
 # ── Individual handlers ───────────────────────────────────────────────────────
 
 def _add(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
-    db.add_item(cmd.item_name, cmd.item_quantity, cmd.item_quantity_unit, db_path)
-    db.set_undo(user_handle, "add", {"item_name": cmd.item_name}, db_path)
+    displays: list[str] = []
+    for item in cmd.items:
+        db.add_item(item.name, item.quantity, item.unit, db_path)
+        displays.append(_item_display(item.name, item.quantity, item.unit))
+        logger.info("@%s added '%s'", user_handle, item.name)
 
-    display = _item_display(cmd.item_name, cmd.item_quantity, cmd.item_quantity_unit)
-    logger.info("@%s added '%s'", user_handle, cmd.item_name)
-    return f"Added to list: {display}"
+    db.set_undo(
+        user_handle,
+        "add",
+        {"item_names": [item.name for item in cmd.items]},
+        db_path,
+    )
+
+    if len(displays) == 1:
+        return f"Added to list: {displays[0]}"
+    return "Added to list:\n" + "\n".join(f"  - {d}" for d in displays)
 
 
 def _list(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
@@ -74,20 +85,79 @@ def _list(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
 
 
 def _remove(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
-    target = cmd.remove_target
+    # Resolve every target against a single snapshot of the list before any
+    # deletion. Doing this up front prevents 1-based positions from shifting
+    # as we delete, so "/remove 1, 2, 3" deletes the first three items.
+    snapshot = db.list_items(db_path)
+    resolved: list[dict] = []
+    unresolved: list[str] = []
+    seen_ids: set[int] = set()
 
-    if target.isdigit():
-        removed = db.remove_item_by_number(int(target), db_path)
+    for target in cmd.remove_targets:
+        item = _resolve_remove_target(target, snapshot, seen_ids)
+        if item is None:
+            unresolved.append(target)
+        else:
+            seen_ids.add(item["id"])
+            resolved.append(item)
+
+    if not resolved:
+        if len(unresolved) == 1:
+            return f"Item not found: {unresolved[0]}"
+        return "No items found: " + ", ".join(unresolved)
+
+    db.remove_items_by_ids([r["id"] for r in resolved], db_path)
+    db.set_undo(user_handle, "remove", {"items": resolved}, db_path)
+
+    logger.info(
+        "@%s removed %d item(s): %s",
+        user_handle, len(resolved), ", ".join(r["name"] for r in resolved),
+    )
+
+    displays = [
+        _item_display(r["name"], r.get("quantity"), r.get("quantity_unit"))
+        for r in resolved
+    ]
+    if len(displays) == 1:
+        reply = f"Removed: {displays[0]}"
     else:
-        removed = db.remove_item_by_name(target, db_path)
+        reply = "Removed:\n" + "\n".join(f"  - {d}" for d in displays)
+    if unresolved:
+        reply += "\nNot found: " + ", ".join(unresolved)
+    return reply
 
-    if not removed:
-        return f"Item not found: {target}"
 
-    db.set_undo(user_handle, "remove", removed, db_path)
-    display = _item_display(removed["name"], removed.get("quantity"), removed.get("quantity_unit"))
-    logger.info("@%s removed '%s'", user_handle, removed["name"])
-    return f"Removed: {display}"
+def _resolve_remove_target(
+    target: str,
+    snapshot: list[dict],
+    seen_ids: set[int],
+) -> Optional[dict]:
+    """Resolve one /remove target to a snapshot row, or None if no match."""
+    if target.isdigit():
+        idx = int(target)
+        if 1 <= idx <= len(snapshot):
+            item = snapshot[idx - 1]
+            if item["id"] not in seen_ids:
+                return item
+        return None
+
+    return next(
+        (
+            item for item in snapshot
+            if item["name"].lower() == target.lower() and item["id"] not in seen_ids
+        ),
+        None,
+    )
+
+
+def _clear(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
+    deleted = db.clear_items(db_path)
+    if not deleted:
+        return "The shopping list is already empty."
+
+    db.set_undo(user_handle, "clear", {"items": deleted}, db_path)
+    logger.info("@%s cleared %d item(s) from the list", user_handle, len(deleted))
+    return f"Shopping list cleared ({len(deleted)} item(s) removed)."
 
 
 def _update(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
@@ -179,14 +249,29 @@ def _undo(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
     logger.info("@%s undoing '%s'", user_handle, action_type)
 
     if action_type == "add":
-        removed = db.remove_item_by_name(data["item_name"], db_path)
-        if removed:
-            return f"Undone: '{data['item_name']}' removed from the list."
-        return f"Undo failed: '{data['item_name']}' is no longer on the list."
+        names = data["item_names"]
+        removed = [n for n in names if db.remove_item_by_name(n, db_path)]
+        missing = [n for n in names if n not in removed]
+
+        if len(names) == 1:
+            if removed:
+                return f"Undone: '{names[0]}' removed from the list."
+            return f"Undo failed: '{names[0]}' is no longer on the list."
+
+        parts = [f"Undone: removed {len(removed)} item(s) from the list."]
+        if missing:
+            parts.append(
+                "Some were already gone: " + ", ".join(f"'{n}'" for n in missing)
+            )
+        return " ".join(parts)
 
     if action_type == "remove":
-        db.restore_item(data["name"], data.get("quantity"), data.get("quantity_unit"), db_path)
-        return f"Undone: '{data['name']}' restored to the list."
+        items = data["items"]
+        for it in items:
+            db.restore_item(it["name"], it.get("quantity"), it.get("quantity_unit"), db_path)
+        if len(items) == 1:
+            return f"Undone: '{items[0]['name']}' restored to the list."
+        return f"Undone: {len(items)} item(s) restored to the list."
 
     if action_type == "update_quantity":
         old = data["old_quantity"]
@@ -200,6 +285,11 @@ def _undo(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
     if action_type == "reminder_delete":
         db.restore_reminder(data["remind_at"], data["message"], db_path)
         return f"Undone: reminder restored — '{data['message']}'."
+
+    if action_type == "clear":
+        for it in data["items"]:
+            db.restore_item(it["name"], it.get("quantity"), it.get("quantity_unit"), db_path)
+        return f"Undone: {len(data['items'])} item(s) restored to the list."
 
     if action_type == "reminder_delete_all":
         for r in data["reminders"]:
@@ -215,9 +305,10 @@ def _help(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
     default_time = config.bot.default_reminder_time
     return (
         "Shopping bot commands:\n"
-        f"  @shop <item>                         — add item to list\n"
+        f"  @shop <item>[, <item>…]              — add one or more items to list\n"
         f"  @shop /list  (/{a.list})             — show shopping list\n"
-        f"  @shop /remove <name or #>            — remove item  (/{a.remove})\n"
+        f"  @shop /remove <name|# [, …]|N-M>     — remove item(s)  (/{a.remove})\n"
+        f"  @shop /delete [name|# [, …]|N-M]    — remove item(s), or clear whole list\n"
         f"  @shop /update <qty> <name>           — set item quantity\n"
         f"  @shop /reminder YYYY-MM-DD [HH:MM] <message>\n"
         f"                                       — add reminder (default time {default_time})\n"

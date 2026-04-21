@@ -178,6 +178,41 @@ def remove_item_by_name(name: str, db_path: Path = DB_PATH) -> Optional[dict]:
     return target
 
 
+def clear_items(db_path: Path = DB_PATH) -> list[dict]:
+    """Delete every item from the shopping list. Returns all deleted rows."""
+    with _connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, name, quantity, quantity_unit FROM shopping_items ORDER BY id"
+        ).fetchall()
+        conn.execute("DELETE FROM shopping_items")
+    logger.debug("Cleared %d item(s) from shopping list", len(rows))
+    return [dict(r) for r in rows]
+
+
+def remove_items_by_ids(ids: list[int], db_path: Path = DB_PATH) -> list[dict]:
+    """
+    Remove multiple items by id in a single transaction.  Returns the rows
+    that existed and were deleted; ids that no longer exist are ignored.
+    """
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    params = tuple(ids)
+    with _connection(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT id, name, quantity, quantity_unit FROM shopping_items"
+            f" WHERE id IN ({placeholders})",
+            params,
+        ).fetchall()
+        if rows:
+            conn.execute(
+                f"DELETE FROM shopping_items WHERE id IN ({placeholders})",
+                params,
+            )
+    logger.debug("Removed %d item(s) by id", len(rows))
+    return [dict(r) for r in rows]
+
+
 def restore_item(
     name: str,
     quantity: Optional[int],

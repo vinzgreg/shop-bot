@@ -19,42 +19,71 @@ class TestParseAdd:
     def test_plain_item(self, aliases):
         cmd = parse("milk", aliases)
         assert cmd.command == "add"
-        assert cmd.item_name == "milk"
-        assert cmd.item_quantity is None
-        assert cmd.item_quantity_unit is None
+        assert len(cmd.items) == 1
+        assert cmd.items[0].name == "milk"
+        assert cmd.items[0].quantity is None
+        assert cmd.items[0].unit is None
 
     def test_quantity_and_item(self, aliases):
         cmd = parse("2 apples", aliases)
         assert cmd.command == "add"
-        assert cmd.item_name == "apples"
-        assert cmd.item_quantity == 2
-        assert cmd.item_quantity_unit is None
+        assert cmd.items[0].name == "apples"
+        assert cmd.items[0].quantity == 2
+        assert cmd.items[0].unit is None
 
     def test_quantity_with_unit(self, aliases):
         cmd = parse("500g flour", aliases)
         assert cmd.command == "add"
-        assert cmd.item_name == "flour"
-        assert cmd.item_quantity == 500
-        assert cmd.item_quantity_unit == "g"
+        assert cmd.items[0].name == "flour"
+        assert cmd.items[0].quantity == 500
+        assert cmd.items[0].unit == "g"
 
     def test_quantity_with_unit_kg(self, aliases):
         cmd = parse("2kg potatoes", aliases)
         assert cmd.command == "add"
-        assert cmd.item_name == "potatoes"
-        assert cmd.item_quantity == 2
-        assert cmd.item_quantity_unit == "kg"
+        assert cmd.items[0].name == "potatoes"
+        assert cmd.items[0].quantity == 2
+        assert cmd.items[0].unit == "kg"
 
     def test_float_quantity_truncates(self, aliases):
         cmd = parse("1.5l milk", aliases)
         assert cmd.command == "add"
-        assert cmd.item_name == "milk"
-        assert cmd.item_quantity == 1  # int(float("1.5")) = 1
-        assert cmd.item_quantity_unit == "l"
+        assert cmd.items[0].name == "milk"
+        assert cmd.items[0].quantity == 1  # int(float("1.5")) = 1
+        assert cmd.items[0].unit == "l"
 
     def test_multiword_item(self, aliases):
         cmd = parse("brown sugar", aliases)
         assert cmd.command == "add"
-        assert cmd.item_name == "brown sugar"
+        assert len(cmd.items) == 1
+        assert cmd.items[0].name == "brown sugar"
+
+    def test_comma_separated_items(self, aliases):
+        cmd = parse("apple, pea", aliases)
+        assert cmd.command == "add"
+        assert [i.name for i in cmd.items] == ["apple", "pea"]
+        assert all(i.quantity is None and i.unit is None for i in cmd.items)
+
+    def test_comma_separated_with_quantities(self, aliases):
+        cmd = parse("500g sugar, 3 apple", aliases)
+        assert cmd.command == "add"
+        assert len(cmd.items) == 2
+        assert cmd.items[0].name == "sugar"
+        assert cmd.items[0].quantity == 500
+        assert cmd.items[0].unit == "g"
+        assert cmd.items[1].name == "apple"
+        assert cmd.items[1].quantity == 3
+        assert cmd.items[1].unit is None
+
+    def test_comma_trailing_and_empty_pieces(self, aliases):
+        cmd = parse("apple, , pea,", aliases)
+        assert cmd.command == "add"
+        assert [i.name for i in cmd.items] == ["apple", "pea"]
+
+    def test_comma_no_spaces(self, aliases):
+        cmd = parse("apple,pea", aliases)
+        assert cmd.command == "add"
+        assert [i.name for i in cmd.items] == ["apple", "pea"]
 
 
 class TestParseList:
@@ -71,12 +100,61 @@ class TestParseRemove:
     def test_remove_by_number(self, aliases):
         cmd = parse("/remove 3", aliases)
         assert cmd.command == "remove"
-        assert cmd.remove_target == "3"
+        assert cmd.remove_targets == ["3"]
 
     def test_remove_by_name(self, aliases):
         cmd = parse("/remove milk", aliases)
         assert cmd.command == "remove"
-        assert cmd.remove_target == "milk"
+        assert cmd.remove_targets == ["milk"]
+
+    def test_remove_comma_list(self, aliases):
+        cmd = parse("/remove 1, 2, 3", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["1", "2", "3"]
+
+    def test_remove_range(self, aliases):
+        cmd = parse("/remove 2-4", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["2", "3", "4"]
+
+    def test_remove_mixed_ranges(self, aliases):
+        cmd = parse("/remove 2-4, 6-7", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["2", "3", "4", "6", "7"]
+
+    def test_remove_mixed_names_and_numbers(self, aliases):
+        cmd = parse("/remove 1, milk, 3-4", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["1", "milk", "3", "4"]
+
+    def test_remove_reversed_range_is_swapped(self, aliases):
+        cmd = parse("/remove 5-3", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["3", "4", "5"]
+
+    def test_delete_no_args_clears_list(self, aliases):
+        cmd = parse("/delete", aliases)
+        assert cmd.command == "clear"
+
+    def test_delete_with_number(self, aliases):
+        cmd = parse("/delete 2", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["2"]
+
+    def test_delete_with_multi(self, aliases):
+        cmd = parse("/delete 1, 2, 3", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["1", "2", "3"]
+
+    def test_delete_with_range(self, aliases):
+        cmd = parse("/delete 2-4, 6-7", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["2", "3", "4", "6", "7"]
+
+    def test_delete_with_name(self, aliases):
+        cmd = parse("/delete milk", aliases)
+        assert cmd.command == "remove"
+        assert cmd.remove_targets == ["milk"]
 
 
 class TestParseUpdate:
@@ -148,7 +226,7 @@ class TestAliases:
     def test_german_remove(self, aliases):
         cmd = parse("/streiche milk", aliases)
         assert cmd.command == "remove"
-        assert cmd.remove_target == "milk"
+        assert cmd.remove_targets == ["milk"]
 
     def test_german_help(self, aliases):
         cmd = parse("/hilfe", aliases)

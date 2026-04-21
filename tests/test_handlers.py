@@ -4,7 +4,7 @@ import pytest
 
 from bot.config import Config, MastodonConfig, BotConfig, AliasConfig
 from bot.handlers import handle
-from bot.parser import ParsedCommand
+from bot.parser import Item, ParsedCommand
 from bot import database as db
 
 
@@ -25,7 +25,7 @@ USER = "testuser@example.social"
 
 class TestAddHandler:
     def test_add_item(self, tmp_db, config):
-        cmd = ParsedCommand(command="add", item_name="milk", item_quantity=2)
+        cmd = ParsedCommand(command="add", items=[Item(name="milk", quantity=2)])
         reply = handle(cmd, USER, config, tmp_db)
         assert "Added" in reply
         assert "milk" in reply
@@ -33,9 +33,28 @@ class TestAddHandler:
         assert len(items) == 1
 
     def test_add_item_with_unit(self, tmp_db, config):
-        cmd = ParsedCommand(command="add", item_name="flour", item_quantity=500, item_quantity_unit="g")
+        cmd = ParsedCommand(
+            command="add",
+            items=[Item(name="flour", quantity=500, unit="g")],
+        )
         reply = handle(cmd, USER, config, tmp_db)
         assert "500g flour" in reply
+
+    def test_add_multiple_items(self, tmp_db, config):
+        cmd = ParsedCommand(
+            command="add",
+            items=[
+                Item(name="sugar", quantity=500, unit="g"),
+                Item(name="apple", quantity=3),
+            ],
+        )
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "500g sugar" in reply
+        assert "apple" in reply
+        items = db.list_items(tmp_db)
+        assert len(items) == 2
+        names = {i["name"] for i in items}
+        assert names == {"sugar", "apple"}
 
 
 class TestListHandler:
@@ -54,21 +73,82 @@ class TestListHandler:
 class TestRemoveHandler:
     def test_remove_by_number(self, tmp_db, config):
         db.add_item("milk", 1, None, tmp_db)
-        cmd = ParsedCommand(command="remove", remove_target="1")
+        cmd = ParsedCommand(command="remove", remove_targets=["1"])
         reply = handle(cmd, USER, config, tmp_db)
         assert "Removed" in reply
         assert db.list_items(tmp_db) == []
 
     def test_remove_by_name(self, tmp_db, config):
         db.add_item("milk", 1, None, tmp_db)
-        cmd = ParsedCommand(command="remove", remove_target="milk")
+        cmd = ParsedCommand(command="remove", remove_targets=["milk"])
         reply = handle(cmd, USER, config, tmp_db)
         assert "Removed" in reply
 
     def test_remove_not_found(self, tmp_db, config):
-        cmd = ParsedCommand(command="remove", remove_target="nope")
+        cmd = ParsedCommand(command="remove", remove_targets=["nope"])
         reply = handle(cmd, USER, config, tmp_db)
         assert "not found" in reply.lower()
+
+    def test_remove_multiple_by_number(self, tmp_db, config):
+        for name in ("milk", "bread", "eggs", "apple"):
+            db.add_item(name, 1, None, tmp_db)
+        cmd = ParsedCommand(command="remove", remove_targets=["1", "2", "3"])
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "Removed" in reply
+        remaining = [i["name"] for i in db.list_items(tmp_db)]
+        assert remaining == ["apple"]
+
+    def test_remove_range(self, tmp_db, config):
+        for name in ("a", "b", "c", "d", "e"):
+            db.add_item(name, 1, None, tmp_db)
+        cmd = ParsedCommand(command="remove", remove_targets=["2", "3", "4"])
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "Removed" in reply
+        remaining = [i["name"] for i in db.list_items(tmp_db)]
+        assert remaining == ["a", "e"]
+
+    def test_remove_mixed_ranges(self, tmp_db, config):
+        for name in ("a", "b", "c", "d", "e", "f", "g"):
+            db.add_item(name, 1, None, tmp_db)
+        cmd = ParsedCommand(
+            command="remove", remove_targets=["2", "3", "4", "6", "7"]
+        )
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "Removed" in reply
+        remaining = [i["name"] for i in db.list_items(tmp_db)]
+        assert remaining == ["a", "e"]
+
+    def test_remove_partial_not_found(self, tmp_db, config):
+        db.add_item("milk", 1, None, tmp_db)
+        cmd = ParsedCommand(command="remove", remove_targets=["1", "nope"])
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "Removed" in reply
+        assert "Not found" in reply
+        assert "nope" in reply
+
+    def test_remove_deduplicates(self, tmp_db, config):
+        db.add_item("milk", 1, None, tmp_db)
+        db.add_item("bread", 1, None, tmp_db)
+        cmd = ParsedCommand(
+            command="remove", remove_targets=["1", "1", "milk"]
+        )
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "Removed" in reply
+        remaining = [i["name"] for i in db.list_items(tmp_db)]
+        assert remaining == ["bread"]
+
+    def test_undo_remove_multiple(self, tmp_db, config):
+        for name in ("milk", "bread", "eggs"):
+            db.add_item(name, 1, None, tmp_db)
+        handle(
+            ParsedCommand(command="remove", remove_targets=["1", "2", "3"]),
+            USER, config, tmp_db,
+        )
+        assert db.list_items(tmp_db) == []
+
+        reply = handle(ParsedCommand(command="undo"), USER, config, tmp_db)
+        assert "Undone" in reply
+        assert len(db.list_items(tmp_db)) == 3
 
 
 class TestUpdateHandler:
@@ -87,7 +167,7 @@ class TestUpdateHandler:
 
 class TestUndoHandler:
     def test_undo_add(self, tmp_db, config):
-        cmd_add = ParsedCommand(command="add", item_name="milk", item_quantity=1)
+        cmd_add = ParsedCommand(command="add", items=[Item(name="milk", quantity=1)])
         handle(cmd_add, USER, config, tmp_db)
         assert len(db.list_items(tmp_db)) == 1
 
@@ -96,9 +176,21 @@ class TestUndoHandler:
         assert "Undone" in reply
         assert db.list_items(tmp_db) == []
 
+    def test_undo_add_multiple(self, tmp_db, config):
+        cmd_add = ParsedCommand(
+            command="add",
+            items=[Item(name="milk"), Item(name="bread"), Item(name="eggs")],
+        )
+        handle(cmd_add, USER, config, tmp_db)
+        assert len(db.list_items(tmp_db)) == 3
+
+        reply = handle(ParsedCommand(command="undo"), USER, config, tmp_db)
+        assert "Undone" in reply
+        assert db.list_items(tmp_db) == []
+
     def test_undo_remove(self, tmp_db, config):
         db.add_item("milk", 2, "l", tmp_db)
-        cmd_remove = ParsedCommand(command="remove", remove_target="1")
+        cmd_remove = ParsedCommand(command="remove", remove_targets=["1"])
         handle(cmd_remove, USER, config, tmp_db)
         assert db.list_items(tmp_db) == []
 
@@ -197,6 +289,32 @@ class TestReminderHandlers:
         reply = handle(ParsedCommand(command="undo"), USER, config, tmp_db)
         assert "Undone" in reply
         assert len(db.list_reminders(tmp_db)) == 2
+
+
+class TestClearHandler:
+    def test_clear_list(self, tmp_db, config):
+        for name in ("milk", "bread", "eggs"):
+            db.add_item(name, 1, None, tmp_db)
+        cmd = ParsedCommand(command="clear")
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "cleared" in reply.lower()
+        assert "3" in reply
+        assert db.list_items(tmp_db) == []
+
+    def test_clear_empty_list(self, tmp_db, config):
+        cmd = ParsedCommand(command="clear")
+        reply = handle(cmd, USER, config, tmp_db)
+        assert "already empty" in reply.lower()
+
+    def test_undo_clear(self, tmp_db, config):
+        for name in ("milk", "bread"):
+            db.add_item(name, 1, None, tmp_db)
+        handle(ParsedCommand(command="clear"), USER, config, tmp_db)
+        assert db.list_items(tmp_db) == []
+
+        reply = handle(ParsedCommand(command="undo"), USER, config, tmp_db)
+        assert "Undone" in reply
+        assert len(db.list_items(tmp_db)) == 2
 
 
 class TestHelpHandler:

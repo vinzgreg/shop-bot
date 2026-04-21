@@ -175,13 +175,17 @@ class MastodonClient:
 
     # ── Listening ──────────────────────────────────────────────────────────
 
-    def listen(self, on_dm: Callable) -> None:
+    def listen(self, on_dm: Callable, get_last_seen_id: Optional[Callable] = None) -> None:
         """
         Block indefinitely and call on_dm(status) for every incoming DM.
 
         Tries the streaming API first.  Falls back to polling when streaming
         fails, and retries streaming periodically so we recover automatically
         when the instance becomes reachable again.
+
+        get_last_seen_id, if provided, is called each time we enter the poll
+        fallback to seed since_id so already-processed notifications are not
+        replayed.
         """
         while True:
             try:
@@ -196,19 +200,20 @@ class MastodonClient:
                 logger.warning(
                     "Streaming connection lost; switching to polling fallback"
                 )
-                self._poll_loop(on_dm)
+                initial = get_last_seen_id() if get_last_seen_id else None
+                self._poll_loop(on_dm, initial_since_id=initial)
             except Exception:
                 logger.exception(
                     "Unexpected streaming error; retrying in %ds", _STREAM_RETRY_DELAY
                 )
                 time.sleep(_STREAM_RETRY_DELAY)
 
-    def _poll_loop(self, on_dm: Callable) -> None:
+    def _poll_loop(self, on_dm: Callable, initial_since_id: Optional[str] = None) -> None:
         """
         Poll for new DM notifications.  Returns after several consecutive
         successful polls so the caller can attempt to restore streaming.
         """
-        last_seen_id = None
+        last_seen_id = initial_since_id
         consecutive_failures = 0
         consecutive_successes = 0
 

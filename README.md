@@ -17,9 +17,14 @@ The shopping list is **shared** — all users who DM the bot see and modify the 
 | `@shop apple` | Add "apple" to the list |
 | `@shop 2 apples` | Add with quantity |
 | `@shop 500g flour` | Add with unit quantity |
+| `@shop 500g sugar, 3 apple` | Add several items at once (comma-separated) |
 | `@shop /list` | Show the full list |
 | `@shop /remove apple` | Remove by name (first exact match) |
 | `@shop /remove 1` | Remove by list number |
+| `@shop /remove 1, 2, 3` | Remove several items at once |
+| `@shop /remove 2-4, 6-7` | Remove items by range(s) |
+| `@shop /delete` | Clear the entire shopping list |
+| `@shop /delete 1, 2-4` | Remove specific items (same syntax as `/remove`) |
 | `@shop /update 4 apple` | Set quantity of an existing item |
 
 Any unrecognised message is treated as an item to add. Adding a duplicate item increments its quantity by 1.
