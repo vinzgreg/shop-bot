@@ -5,10 +5,7 @@ Loads configuration, initialises the database, connects to Mastodon,
 starts the reminder scheduler, and enters the DM-listening loop.
 """
 
-import html
-import html.parser
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -18,48 +15,9 @@ from .handlers import handle
 from .mastodon_client import MastodonClient
 from .parser import parse
 from .scheduler import start_scheduler
+from .text import strip_html, strip_mention
 
 logger = logging.getLogger(__name__)
-
-
-# ── HTML → plain text ─────────────────────────────────────────────────────────
-
-class _HTMLStripper(html.parser.HTMLParser):
-    """Collect text content while discarding all HTML tags."""
-
-    def __init__(self):
-        super().__init__()
-        self._parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        self._parts.append(data)
-
-    def get_text(self) -> str:
-        return " ".join(self._parts).strip()
-
-
-def _strip_html(raw: str) -> str:
-    """Convert Mastodon HTML content to plain text."""
-    stripper = _HTMLStripper()
-    stripper.feed(raw)
-    text = stripper.get_text()
-    # Decode HTML entities such as &amp; &lt; &gt;
-    return html.unescape(text)
-
-
-def _strip_mention(text: str, bot_acct: str) -> str:
-    """
-    Remove the leading @botname mention from the DM body.
-
-    Mastodon may include the full handle (@shop@instance.social) or just the
-    local part (@shop).  We strip whichever form is present.
-    """
-    local = bot_acct.split("@")[0]
-    pattern = re.compile(
-        rf"@{re.escape(local)}(?:@\S+)?\s*",
-        re.IGNORECASE,
-    )
-    return pattern.sub("", text, count=1).strip()
 
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -114,7 +72,7 @@ def run() -> None:
 
         # Mastodon delivers content as HTML; convert to plain text first.
         raw_html = status.get("content", "")
-        plain    = _strip_html(raw_html)
+        plain    = strip_html(raw_html)
 
         logger.info("DM from @%s: %r", sender_acct, plain[:120])
         log_interaction(sender_acct, plain, DB_PATH)
@@ -130,7 +88,7 @@ def run() -> None:
             return
 
         # Strip the @mention prefix, parse, execute, reply
-        cleaned = _strip_mention(plain, client._bot_acct)
+        cleaned = strip_mention(plain, client._bot_acct)
         cmd     = parse(cleaned, config.aliases)
         reply   = handle(cmd, sender_acct, config, DB_PATH)
 
