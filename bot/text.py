@@ -21,7 +21,7 @@ class _HTMLStripper(html.parser.HTMLParser):
         self._parts.append(data)
 
     def get_text(self) -> str:
-        return " ".join(self._parts).strip()
+        return "".join(self._parts)
 
 
 _MULTI_SPACE = re.compile(r"\s+")

@@ -57,12 +57,24 @@ class _DMStreamListener(StreamListener):
         self._bot_acct = bot_acct
 
     def on_notification(self, notification) -> None:
+        logger.debug(
+            "stream notification type=%s visibility=%s from=%s",
+            notification.get("type"),
+            (notification.get("status") or {}).get("visibility"),
+            (notification.get("status") or {}).get("account", {}).get("acct"),
+        )
         if not _is_dm_for_us(notification, self._bot_acct):
             return
         self._on_dm(notification["id"], notification["status"])
 
     def on_error(self, data) -> None:
         logger.error("Streaming error event received: %s", data)
+
+    def handle_heartbeat(self) -> None:
+        logger.debug("stream heartbeat")
+
+    def on_unknown_event(self, name, unknown_event=None) -> None:
+        logger.info("stream event %s: %r", name, unknown_event)
 
 
 class MastodonClient:
