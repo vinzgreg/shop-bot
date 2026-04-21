@@ -140,7 +140,6 @@ class MastodonClient:
                 content,
                 in_reply_to_id=reply_to_id,
                 visibility="direct",
-                content_type="text/html",
             )
             logger.debug("DM sent to @%s", recipient_acct)
         except (MastodonNetworkError, MastodonAPIError):
@@ -151,7 +150,7 @@ class MastodonClient:
         Post a public toot.  Raises on failure so the scheduler can decide
         whether to retry.
         """
-        self._api.status_post(text, visibility="public", content_type="text/html")
+        self._api.status_post(text, visibility="public")
         logger.debug("Public toot posted: %r", text[:80])
 
     # ── Backfill ───────────────────────────────────────────────────────────
