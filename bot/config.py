@@ -2,7 +2,7 @@
 
 import logging
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,17 @@ class AliasConfig:
 
 
 @dataclass
+class WebConfig:
+    password: str = ""       # shared Basic Auth password; required when web UI is enabled
+    port: int = 8080         # internal port the Flask app listens on
+
+
+@dataclass
 class Config:
     mastodon: MastodonConfig
     bot: BotConfig
     aliases: AliasConfig
+    web: WebConfig = field(default_factory=WebConfig)
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -84,6 +91,12 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         help=a.get("help", "hilfe"),
     )
 
+    w = raw.get("web", {})
+    web_cfg = WebConfig(
+        password=w.get("password", ""),
+        port=int(w.get("port", 8080)),
+    )
+
     logger.info(
         "Config loaded: instance=%s access=%s log_level=%s timezone=%s",
         mastodon_cfg.instance_url,
@@ -91,4 +104,4 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         bot_cfg.log_level,
         bot_cfg.timezone,
     )
-    return Config(mastodon=mastodon_cfg, bot=bot_cfg, aliases=aliases_cfg)
+    return Config(mastodon=mastodon_cfg, bot=bot_cfg, aliases=aliases_cfg, web=web_cfg)

@@ -3,5 +3,19 @@ services:
     build: .
     restart: unless-stopped
     volumes:
-      - ./config:/app/config:ro   # config.toml (read-only)
-      - ./data/shop:/app/data/shop  # SQLite database (persistent)
+      - ./config:/app/config:ro        # config.toml (read-only)
+      - ./data/shop:/app/data/shop     # SQLite database (persistent)
+
+  shop-web:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "web.app"]
+    ports:
+      - "127.0.0.1:8080:8080"          # only reachable locally; nginx proxies externally
+    volumes:
+      - ./config:/app/config:ro        # config.toml (read-only)
+      - ./data/shop:/app/data/shop     # same SQLite database as the bot
+    environment:
+      # Override the password here or set it in config.toml [web] section.
+      # Setting it here keeps the secret out of the config file.
+      - WEB_PASSWORD=${WEB_PASSWORD:-}

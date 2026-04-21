@@ -1,0 +1,42 @@
+# nginx server block for shop.hever.de
+#
+# Prerequisites:
+#   1. DNS A record: shop.hever.de → <your VPS IP>
+#   2. Obtain a certificate:
+#        certbot --nginx -d shop.hever.de
+#   3. Copy this file to /etc/nginx/sites-available/shop.hever.de
+#      and symlink it: ln -s ../sites-available/shop.hever.de sites-enabled/
+#   4. Test: nginx -t && systemctl reload nginx
+#
+# The shop-web Docker container must be running and bound to 127.0.0.1:8080.
+
+server {
+    listen 80;
+    server_name shop.hever.de;
+
+    # certbot will add the HTTPS redirect automatically
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name shop.hever.de;
+
+    # Certificates managed by certbot (filled in automatically)
+    # ssl_certificate     /etc/letsencrypt/live/shop.hever.de/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/shop.hever.de/privkey.pem;
+
+    # Security headers
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header Referrer-Policy no-referrer;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8080;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+}

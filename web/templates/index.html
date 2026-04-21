@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Einkaufsliste</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+
+    h1 { font-size: 1.5rem; margin-bottom: 1.25rem; }
+
+    /* Add form */
+    #add-form {
+      display: flex;
+      gap: .5rem;
+      margin-bottom: 1.5rem;
+    }
+    #add-form input[type="text"] {
+      flex: 1;
+      padding: .5rem .75rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+    #add-form input[type="number"] {
+      width: 5rem;
+      padding: .5rem .5rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+    #add-form button {
+      padding: .5rem 1rem;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #add-form button:hover { background: #1d4ed8; }
+
+    /* List */
+    #list { list-style: none; }
+
+    #list li {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: .65rem 1rem;
+      margin-bottom: .5rem;
+      transition: opacity .2s;
+    }
+    #list li.done { opacity: .4; text-decoration: line-through; }
+
+    #list li .name { flex: 1; font-size: 1rem; }
+
+    #list li .qty-wrap {
+      display: flex;
+      align-items: center;
+      gap: .25rem;
+    }
+    .qty-btn {
+      width: 1.75rem; height: 1.75rem;
+      border: 1px solid #ccc;
+      background: #f9fafb;
+      border-radius: 4px;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .qty-btn:hover { background: #e5e7eb; }
+    .qty-display { min-width: 2rem; text-align: center; font-size: .95rem; }
+
+    .tick-btn {
+      width: 1.75rem; height: 1.75rem;
+      border: 1px solid #ccc;
+      background: #f9fafb;
+      border-radius: 50%;
+      font-size: .9rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tick-btn:hover { background: #dcfce7; border-color: #86efac; }
+
+    .del-btn {
+      background: none;
+      border: none;
+      color: #9ca3af;
+      font-size: 1.1rem;
+      cursor: pointer;
+      padding: 0 .25rem;
+    }
+    .del-btn:hover { color: #ef4444; }
+
+    #empty-msg { color: #6b7280; font-style: italic; }
+    #error-msg { color: #ef4444; font-size: .9rem; margin-bottom: .75rem; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>Einkaufsliste</h1>
+
+  <form id="add-form" autocomplete="off">
+    <input type="text" id="new-name" placeholder="Artikel" required>
+    <input type="number" id="new-qty" placeholder="Menge" min="1">
+    <input type="text" id="new-unit" placeholder="Einheit" style="width:5.5rem;padding:.5rem .5rem;border:1px solid #ccc;border-radius:6px;font-size:1rem;">
+    <button type="submit">+</button>
+  </form>
+
+  <div id="error-msg"></div>
+  <ul id="list"></ul>
+  <p id="empty-msg" hidden>Die Einkaufsliste ist leer.</p>
+
+  <script>
+    const listEl   = document.getElementById('list');
+    const emptyMsg = document.getElementById('empty-msg');
+    const errorMsg = document.getElementById('error-msg');
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      setTimeout(() => { errorMsg.textContent = ''; }, 4000);
+    }
+
+    async function apiFetch(url, opts = {}) {
+      const res = await fetch(url, {
+        headers: { 'Content-Type': 'application/json', ...opts.headers },
+        ...opts,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || res.statusText);
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    function formatQty(item) {
+      if (item.quantity == null) return '';
+      return item.quantity_unit ? `${item.quantity} ${item.quantity_unit}` : String(item.quantity);
+    }
+
+    function renderItem(item) {
+      const li = document.createElement('li');
+      li.dataset.id = item.id;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'name';
+      nameSpan.textContent = item.name;
+
+      const qtyWrap = document.createElement('span');
+      qtyWrap.className = 'qty-wrap';
+
+      if (item.quantity != null) {
+        const minusBtn = document.createElement('button');
+        minusBtn.className = 'qty-btn';
+        minusBtn.textContent = '−';
+        minusBtn.title = 'Menge verringern';
+
+        const qtyDisplay = document.createElement('span');
+        qtyDisplay.className = 'qty-display';
+        qtyDisplay.textContent = formatQty(item);
+
+        const plusBtn = document.createElement('button');
+        plusBtn.className = 'qty-btn';
+        plusBtn.textContent = '+';
+        plusBtn.title = 'Menge erhöhen';
+
+        minusBtn.addEventListener('click', async () => {
+          const newQty = item.quantity - 1;
+          if (newQty < 1) return;
+          try {
+            await apiFetch(`/api/items/${item.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ quantity: newQty }),
+            });
+            item.quantity = newQty;
+            qtyDisplay.textContent = formatQty(item);
+          } catch (e) { showError(e.message); }
+        });
+
+        plusBtn.addEventListener('click', async () => {
+          const newQty = item.quantity + 1;
+          try {
+            await apiFetch(`/api/items/${item.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ quantity: newQty }),
+            });
+            item.quantity = newQty;
+            qtyDisplay.textContent = formatQty(item);
+          } catch (e) { showError(e.message); }
+        });
+
+        qtyWrap.append(minusBtn, qtyDisplay, plusBtn);
+      }
+
+      const tickBtn = document.createElement('button');
+      tickBtn.className = 'tick-btn';
+      tickBtn.title = 'Erledigt';
+      tickBtn.textContent = '✓';
+      tickBtn.addEventListener('click', async () => {
+        try {
+          await apiFetch(`/api/items/${item.id}`, { method: 'DELETE' });
+          li.remove();
+          checkEmpty();
+        } catch (e) { showError(e.message); }
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'del-btn';
+      delBtn.title = 'Löschen';
+      delBtn.textContent = '×';
+      delBtn.addEventListener('click', async () => {
+        try {
+          await apiFetch(`/api/items/${item.id}`, { method: 'DELETE' });
+          li.remove();
+          checkEmpty();
+        } catch (e) { showError(e.message); }
+      });
+
+      li.append(nameSpan, qtyWrap, tickBtn, delBtn);
+      return li;
+    }
+
+    function checkEmpty() {
+      emptyMsg.hidden = listEl.children.length > 0;
+    }
+
+    async function loadList() {
+      try {
+        const items = await apiFetch('/api/items');
+        listEl.innerHTML = '';
+        items.forEach(item => listEl.appendChild(renderItem(item)));
+        checkEmpty();
+      } catch (e) { showError('Laden fehlgeschlagen: ' + e.message); }
+    }
+
+    document.getElementById('add-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('new-name').value.trim();
+      const qtyRaw = document.getElementById('new-qty').value;
+      const unit = document.getElementById('new-unit').value.trim();
+      if (!name) return;
+      try {
+        await apiFetch('/api/items', {
+          method: 'POST',
+          body: JSON.stringify({
+            name,
+            quantity: qtyRaw ? parseInt(qtyRaw, 10) : null,
+            unit: unit || null,
+          }),
+        });
+        document.getElementById('new-name').value = '';
+        document.getElementById('new-qty').value = '';
+        document.getElementById('new-unit').value = '';
+        await loadList();
+      } catch (e) { showError(e.message); }
+    });
+
+    loadList();
+  </script>
+</body>
+</html>

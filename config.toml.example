@@ -43,3 +43,13 @@ reminder_delete  = "loesche"        # /reminder delete → /erinnerung loesche
 reminder_all     = "alle"           # delete all       → alle
 undo             = "undo"           # /undo stays the same in German
 help             = "hilfe"          # /help      → /hilfe
+
+
+[web]
+# Shared password for the web UI (HTTP Basic Auth).
+# Prefer setting this via the WEB_PASSWORD environment variable instead of
+# storing it here, so the secret stays out of the config file.
+password = "your_web_password_here"
+
+# Internal port Flask listens on.  Must match the docker-compose port mapping.
+port = 8080
