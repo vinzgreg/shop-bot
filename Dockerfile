@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source
 COPY bot/ bot/
+COPY web/ web/
 
 # Create mount-point directories with correct ownership
 RUN mkdir -p /app/config /app/data && chown -R appuser:appuser /app

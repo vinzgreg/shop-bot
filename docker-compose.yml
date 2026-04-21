@@ -9,7 +9,7 @@ services:
   shop-web:
     build: .
     restart: unless-stopped
-    command: ["python", "-m", "web.app"]
+    command: ["python", "-m", "web"]
     ports:
       - "127.0.0.1:8080:8080"          # only reachable locally; nginx proxies externally
     volumes:
