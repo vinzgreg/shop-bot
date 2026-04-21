@@ -56,7 +56,9 @@ def _fire_due_reminders(mastodon_client, db_path) -> None:
     logger.info("%d reminder(s) due", len(due))
 
     for reminder in due:
-        message = f"Reminder: {reminder['message']}"
+        planned_by = reminder.get("planned_by")
+        mention = f"@{planned_by} " if planned_by else ""
+        message = f"{mention}Reminder: {reminder['message']}"
         try:
             mastodon_client.post_public(message)
             db.mark_reminder_fired(reminder["id"], db_path)

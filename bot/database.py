@@ -92,6 +92,13 @@ def init_db(db_path: Path = DB_PATH) -> None:
             );
         """)
 
+    # Migration: add planned_by column if it does not exist yet
+    with _connection(db_path) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(reminders)")}
+        if "planned_by" not in cols:
+            conn.execute("ALTER TABLE reminders ADD COLUMN planned_by TEXT")
+            logger.info("Migrated reminders table: added planned_by column")
+
     logger.debug("Database schema ready")
 
 
@@ -253,13 +260,15 @@ def update_item_quantity(name: str, quantity: int, db_path: Path = DB_PATH) -> b
 
 # ── Reminders ─────────────────────────────────────────────────────────────────
 
-def add_reminder(remind_at_utc: str, message: str, db_path: Path = DB_PATH) -> int:
+def add_reminder(
+    remind_at_utc: str, message: str, planned_by: str, db_path: Path = DB_PATH
+) -> int:
     """Store a new reminder.  remind_at_utc must be a UTC ISO-8601 string."""
     with _connection(db_path) as conn:
         cur = conn.execute(
-            "INSERT INTO reminders (remind_at, message, inserted_at, fired)"
-            " VALUES (?, ?, ?, 0)",
-            (remind_at_utc, message, _utc_now()),
+            "INSERT INTO reminders (remind_at, message, planned_by, inserted_at, fired)"
+            " VALUES (?, ?, ?, ?, 0)",
+            (remind_at_utc, message, planned_by, _utc_now()),
         )
         reminder_id = cur.lastrowid
     logger.debug("Added reminder id=%d at %s: '%s'", reminder_id, remind_at_utc, message)
@@ -270,7 +279,7 @@ def list_reminders(db_path: Path = DB_PATH) -> list[dict]:
     """Return all unfired reminders sorted by remind_at ascending."""
     with _connection(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, remind_at, message FROM reminders"
+            "SELECT id, remind_at, message, planned_by FROM reminders"
             " WHERE fired = 0 ORDER BY remind_at"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -283,7 +292,7 @@ def delete_reminder_by_number(number: int, db_path: Path = DB_PATH) -> Optional[
     """
     with _connection(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, remind_at, message FROM reminders"
+            "SELECT id, remind_at, message, planned_by FROM reminders"
             " WHERE fired = 0 ORDER BY remind_at"
         ).fetchall()
         if number < 1 or number > len(rows):
@@ -305,7 +314,7 @@ def delete_all_reminders(db_path: Path = DB_PATH) -> list[dict]:
     """Delete all unfired reminders. Returns list of all deleted rows."""
     with _connection(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, remind_at, message FROM reminders WHERE fired = 0"
+            "SELECT id, remind_at, message, planned_by FROM reminders WHERE fired = 0"
         ).fetchall()
         deleted = [dict(r) for r in rows]
         conn.execute("DELETE FROM reminders WHERE fired = 0")
@@ -313,13 +322,15 @@ def delete_all_reminders(db_path: Path = DB_PATH) -> list[dict]:
     return deleted
 
 
-def restore_reminder(remind_at_utc: str, message: str, db_path: Path = DB_PATH) -> None:
+def restore_reminder(
+    remind_at_utc: str, message: str, planned_by: Optional[str] = None, db_path: Path = DB_PATH
+) -> None:
     """Re-insert a deleted reminder (used by undo)."""
     with _connection(db_path) as conn:
         conn.execute(
-            "INSERT INTO reminders (remind_at, message, inserted_at, fired)"
-            " VALUES (?, ?, ?, 0)",
-            (remind_at_utc, message, _utc_now()),
+            "INSERT INTO reminders (remind_at, message, planned_by, inserted_at, fired)"
+            " VALUES (?, ?, ?, ?, 0)",
+            (remind_at_utc, message, planned_by, _utc_now()),
         )
     logger.debug("Restored reminder at %s", remind_at_utc)
 
@@ -328,7 +339,7 @@ def get_due_reminders(now_utc: str, db_path: Path = DB_PATH) -> list[dict]:
     """Return all unfired reminders whose remind_at is at or before now_utc."""
     with _connection(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, remind_at, message FROM reminders"
+            "SELECT id, remind_at, message, planned_by FROM reminders"
             " WHERE fired = 0 AND remind_at <= ?",
             (now_utc,),
         ).fetchall()

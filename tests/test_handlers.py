@@ -245,14 +245,14 @@ class TestReminderHandlers:
         assert "No reminders" in reply
 
     def test_delete_reminder(self, tmp_db, config):
-        db.add_reminder("2026-05-01T05:30:00+00:00", "cake", tmp_db)
+        db.add_reminder("2026-05-01T05:30:00+00:00", "cake", USER, tmp_db)
         cmd = ParsedCommand(command="reminder_delete", reminder_number=1)
         reply = handle(cmd, USER, config, tmp_db)
         assert "Deleted" in reply
 
     def test_delete_all_reminders(self, tmp_db, config):
-        db.add_reminder("2026-05-01T05:30:00+00:00", "a", tmp_db)
-        db.add_reminder("2026-05-02T05:30:00+00:00", "b", tmp_db)
+        db.add_reminder("2026-05-01T05:30:00+00:00", "a", USER, tmp_db)
+        db.add_reminder("2026-05-02T05:30:00+00:00", "b", USER, tmp_db)
         cmd = ParsedCommand(command="reminder_delete_all")
         reply = handle(cmd, USER, config, tmp_db)
         assert "Deleted all" in reply
@@ -273,7 +273,7 @@ class TestReminderHandlers:
         assert db.list_reminders(tmp_db) == []
 
     def test_undo_reminder_delete(self, tmp_db, config):
-        db.add_reminder("2026-05-01T05:30:00+00:00", "cake", tmp_db)
+        db.add_reminder("2026-05-01T05:30:00+00:00", "cake", USER, tmp_db)
         handle(ParsedCommand(command="reminder_delete", reminder_number=1), USER, config, tmp_db)
         assert db.list_reminders(tmp_db) == []
 
@@ -282,8 +282,8 @@ class TestReminderHandlers:
         assert len(db.list_reminders(tmp_db)) == 1
 
     def test_undo_reminder_delete_all(self, tmp_db, config):
-        db.add_reminder("2026-05-01T05:30:00+00:00", "a", tmp_db)
-        db.add_reminder("2026-05-02T05:30:00+00:00", "b", tmp_db)
+        db.add_reminder("2026-05-01T05:30:00+00:00", "a", USER, tmp_db)
+        db.add_reminder("2026-05-02T05:30:00+00:00", "b", USER, tmp_db)
         handle(ParsedCommand(command="reminder_delete_all"), USER, config, tmp_db)
 
         reply = handle(ParsedCommand(command="undo"), USER, config, tmp_db)

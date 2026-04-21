@@ -197,7 +197,7 @@ def _reminder_add(cmd: ParsedCommand, user_handle: str, config: Config, db_path)
     local_dt = local_dt.replace(tzinfo=tz)
     utc_str = local_dt.astimezone(timezone.utc).isoformat()
 
-    reminder_id = db.add_reminder(utc_str, cmd.reminder_message, db_path)
+    reminder_id = db.add_reminder(utc_str, cmd.reminder_message, user_handle, db_path)
     db.set_undo(user_handle, "reminder_add", {"reminder_id": reminder_id}, db_path)
 
     logger.info(
@@ -283,7 +283,7 @@ def _undo(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
         return "Undone: reminder deleted."
 
     if action_type == "reminder_delete":
-        db.restore_reminder(data["remind_at"], data["message"], db_path)
+        db.restore_reminder(data["remind_at"], data["message"], data.get("planned_by"), db_path)
         return f"Undone: reminder restored — '{data['message']}'."
 
     if action_type == "clear":
@@ -293,7 +293,7 @@ def _undo(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:
 
     if action_type == "reminder_delete_all":
         for r in data["reminders"]:
-            db.restore_reminder(r["remind_at"], r["message"], db_path)
+            db.restore_reminder(r["remind_at"], r["message"], r.get("planned_by"), db_path)
         return f"Undone: {len(data['reminders'])} reminder(s) restored."
 
     logger.warning("Unknown undo action_type '%s' for @%s", action_type, user_handle)

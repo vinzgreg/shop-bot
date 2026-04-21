@@ -117,20 +117,21 @@ class TestRestoreItem:
 
 class TestReminders:
     def test_add_and_list(self, tmp_db):
-        rid = db.add_reminder("2026-05-01T07:30:00+00:00", "buy cake", tmp_db)
+        rid = db.add_reminder("2026-05-01T07:30:00+00:00", "buy cake", "alice", tmp_db)
         assert rid is not None
         reminders = db.list_reminders(tmp_db)
         assert len(reminders) == 1
         assert reminders[0]["message"] == "buy cake"
+        assert reminders[0]["planned_by"] == "alice"
 
     def test_list_excludes_fired(self, tmp_db):
-        rid = db.add_reminder("2026-05-01T07:30:00+00:00", "msg", tmp_db)
+        rid = db.add_reminder("2026-05-01T07:30:00+00:00", "msg", "alice", tmp_db)
         db.mark_reminder_fired(rid, tmp_db)
         assert db.list_reminders(tmp_db) == []
 
     def test_delete_by_number(self, tmp_db):
-        db.add_reminder("2026-05-01T07:30:00+00:00", "first", tmp_db)
-        db.add_reminder("2026-05-02T07:30:00+00:00", "second", tmp_db)
+        db.add_reminder("2026-05-01T07:30:00+00:00", "first", "alice", tmp_db)
+        db.add_reminder("2026-05-02T07:30:00+00:00", "second", "alice", tmp_db)
         deleted = db.delete_reminder_by_number(1, tmp_db)
         assert deleted["message"] == "first"
         assert len(db.list_reminders(tmp_db)) == 1
@@ -139,8 +140,8 @@ class TestReminders:
         assert db.delete_reminder_by_number(1, tmp_db) is None
 
     def test_delete_all(self, tmp_db):
-        db.add_reminder("2026-05-01T07:30:00+00:00", "a", tmp_db)
-        db.add_reminder("2026-05-02T07:30:00+00:00", "b", tmp_db)
+        db.add_reminder("2026-05-01T07:30:00+00:00", "a", "alice", tmp_db)
+        db.add_reminder("2026-05-02T07:30:00+00:00", "b", "alice", tmp_db)
         deleted = db.delete_all_reminders(tmp_db)
         assert len(deleted) == 2
         assert db.list_reminders(tmp_db) == []
@@ -149,26 +150,26 @@ class TestReminders:
         assert db.delete_all_reminders(tmp_db) == []
 
     def test_restore_reminder(self, tmp_db):
-        db.restore_reminder("2026-05-01T07:30:00+00:00", "restored", tmp_db)
+        db.restore_reminder("2026-05-01T07:30:00+00:00", "restored", "alice", tmp_db)
         reminders = db.list_reminders(tmp_db)
         assert len(reminders) == 1
         assert reminders[0]["message"] == "restored"
 
     def test_get_due_reminders(self, tmp_db):
-        db.add_reminder("2020-01-01T00:00:00+00:00", "past", tmp_db)
-        db.add_reminder("2099-01-01T00:00:00+00:00", "future", tmp_db)
+        db.add_reminder("2020-01-01T00:00:00+00:00", "past", "alice", tmp_db)
+        db.add_reminder("2099-01-01T00:00:00+00:00", "future", "alice", tmp_db)
         due = db.get_due_reminders("2026-04-21T12:00:00+00:00", tmp_db)
         assert len(due) == 1
         assert due[0]["message"] == "past"
 
     def test_mark_fired(self, tmp_db):
-        rid = db.add_reminder("2020-01-01T00:00:00+00:00", "past", tmp_db)
+        rid = db.add_reminder("2020-01-01T00:00:00+00:00", "past", "alice", tmp_db)
         db.mark_reminder_fired(rid, tmp_db)
         due = db.get_due_reminders("2026-04-21T12:00:00+00:00", tmp_db)
         assert len(due) == 0
 
     def test_delete_by_id(self, tmp_db):
-        rid = db.add_reminder("2026-05-01T07:30:00+00:00", "msg", tmp_db)
+        rid = db.add_reminder("2026-05-01T07:30:00+00:00", "msg", "alice", tmp_db)
         db.delete_reminder_by_id(rid, tmp_db)
         assert db.list_reminders(tmp_db) == []
 

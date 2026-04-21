@@ -22,7 +22,9 @@ def format_reminder_table(reminders: list[dict], local_tz: ZoneInfo) -> str:
     for i, rem in enumerate(reminders, start=1):
         utc_dt = _parse_utc(rem["remind_at"])
         local_str = utc_dt.astimezone(local_tz).strftime("%Y-%m-%d %H:%M")
-        lines.append(f"{i}. {local_str} — {rem['message']}")
+        planned_by = rem.get("planned_by")
+        by_str = f" (by @{planned_by})" if planned_by else ""
+        lines.append(f"{i}. {local_str} — {rem['message']}{by_str}")
     return "\n".join(lines)
 
 
