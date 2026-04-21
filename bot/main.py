@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .config import load_config, CONFIG_PATH
-from .database import DB_PATH, init_db, log_interaction
+from .database import DB_PATH, get_kv, init_db, log_interaction, set_kv
 from .handlers import handle
 from .mastodon_client import MastodonClient
 from .parser import parse
@@ -18,6 +18,10 @@ from .scheduler import start_scheduler
 from .text import strip_html, strip_mention
 
 logger = logging.getLogger(__name__)
+
+# kv key for the most recent Mastodon notification id we have processed.
+# Used on startup to replay DMs received while the bot was offline.
+LAST_NOTIFICATION_KEY = "last_seen_notification_id"
 
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -65,7 +69,7 @@ def run() -> None:
     scheduler = start_scheduler(client, DB_PATH)
 
     # ── DM callback ───────────────────────────────────────────────────────────
-    def on_dm(status: dict) -> None:
+    def on_dm(notification_id: str, status: dict) -> None:
         sender_acct = status["account"]["acct"]
         account_id  = status["account"]["id"]
         status_id   = status["id"]
@@ -77,22 +81,52 @@ def run() -> None:
         logger.info("DM from @%s: %r", sender_acct, plain[:120])
         log_interaction(sender_acct, plain, DB_PATH)
 
-        # Access control
-        if not client.is_authorized(account_id):
-            logger.info("Rejecting unauthorised user @%s", sender_acct)
-            client.send_dm(
-                status_id,
-                sender_acct,
-                "Sorry, you are not authorised to use this bot.",
-            )
-            return
+        try:
+            # Access control
+            if not client.is_authorized(account_id):
+                logger.info("Rejecting unauthorised user @%s", sender_acct)
+                client.send_dm(
+                    status_id,
+                    sender_acct,
+                    "Sorry, you are not authorised to use this bot.",
+                )
+                return
 
-        # Strip the @mention prefix, parse, execute, reply
-        cleaned = strip_mention(plain, client._bot_acct)
-        cmd     = parse(cleaned, config.aliases)
-        reply   = handle(cmd, sender_acct, config, DB_PATH)
+            # Strip the @mention prefix, parse, execute, reply
+            cleaned = strip_mention(plain, client._bot_acct)
+            cmd     = parse(cleaned, config.aliases)
+            reply   = handle(cmd, sender_acct, config, DB_PATH)
 
-        client.send_dm(status_id, sender_acct, reply)
+            client.send_dm(status_id, sender_acct, reply)
+        finally:
+            # Persist the high-water mark even if handling raised, so a
+            # broken message can't permanently block backfill on restart.
+            set_kv(LAST_NOTIFICATION_KEY, str(notification_id), DB_PATH)
+
+    # ── Backfill missed DMs ───────────────────────────────────────────────────
+    last_seen = get_kv(LAST_NOTIFICATION_KEY, DB_PATH)
+    if last_seen is None:
+        # First-ever start: don't replay all historical mentions. Record the
+        # current head so subsequent restarts can backfill from this point.
+        try:
+            head = client.latest_notification_id()
+        except Exception:
+            logger.exception("Could not fetch initial notification head — skipping")
+            head = None
+        if head is not None:
+            set_kv(LAST_NOTIFICATION_KEY, str(head), DB_PATH)
+            logger.info("First run — recorded notification head id=%s", head)
+    else:
+        logger.info("Replaying DMs received since notification id=%s", last_seen)
+        replayed = 0
+        try:
+            for nid, status in client.iter_dms_since(last_seen):
+                on_dm(nid, status)
+                replayed += 1
+        except Exception:
+            logger.exception("Backfill aborted after %d message(s)", replayed)
+        else:
+            logger.info("Backfill complete — replayed %d DM(s)", replayed)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     logger.info("Bot ready — listening for DMs")

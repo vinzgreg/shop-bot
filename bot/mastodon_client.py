@@ -7,7 +7,7 @@ toots, and listening for incoming DMs via streaming (with a polling fallback).
 
 import logging
 import time
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 from mastodon import (
     Mastodon,
@@ -38,6 +38,17 @@ _POLL_FAILURE_THRESHOLD = 3
 _API_TIMEOUT = 30
 
 
+def _is_dm_for_us(notification: dict, bot_acct: str) -> bool:
+    """True iff this notification is a direct mention from someone other than us."""
+    if notification.get("type") != "mention":
+        return False
+    status = notification.get("status") or {}
+    if status.get("visibility") != "direct":
+        return False
+    sender = status.get("account", {}).get("acct")
+    return sender is not None and sender != bot_acct
+
+
 class _DMStreamListener(StreamListener):
     """Routes streaming notification events to the on_dm callback."""
 
@@ -46,15 +57,9 @@ class _DMStreamListener(StreamListener):
         self._bot_acct = bot_acct
 
     def on_notification(self, notification) -> None:
-        if notification.get("type") != "mention":
+        if not _is_dm_for_us(notification, self._bot_acct):
             return
-        status = notification.get("status", {})
-        if status.get("visibility") != "direct":
-            return
-        sender = status["account"]["acct"]
-        if sender == self._bot_acct:
-            return  # never react to our own posts
-        self._on_dm(status)
+        self._on_dm(notification["id"], notification["status"])
 
     def on_error(self, data) -> None:
         logger.error("Streaming error event received: %s", data)
@@ -136,6 +141,26 @@ class MastodonClient:
         self._api.status_post(text, visibility="public")
         logger.debug("Public toot posted: %r", text[:80])
 
+    # ── Backfill ───────────────────────────────────────────────────────────
+
+    def latest_notification_id(self) -> Optional[str]:
+        """Return the id of the most recent mention notification, or None."""
+        recent = self._api.notifications(types=["mention"], limit=1)
+        return recent[0]["id"] if recent else None
+
+    def iter_dms_since(self, since_id: str) -> Iterator[tuple[str, dict]]:
+        """
+        Yield (notification_id, status) for every DM newer than since_id,
+        oldest first.  Used to replay messages received while disconnected.
+        """
+        page = self._api.notifications(types=["mention"], since_id=since_id)
+        notifs = self._api.fetch_remaining(page) if page else []
+        # Mastodon returns newest-first; dispatch oldest-first.
+        for n in reversed(notifs):
+            if not _is_dm_for_us(n, self._bot_acct):
+                continue
+            yield n["id"], n["status"]
+
     # ── Listening ──────────────────────────────────────────────────────────
 
     def listen(self, on_dm: Callable) -> None:
@@ -186,13 +211,9 @@ class MastodonClient:
 
                 # Process oldest first
                 for notif in reversed(notifications):
-                    status = notif.get("status", {})
-                    if status.get("visibility") != "direct":
+                    if not _is_dm_for_us(notif, self._bot_acct):
                         continue
-                    sender = status["account"]["acct"]
-                    if sender == self._bot_acct:
-                        continue
-                    on_dm(status)
+                    on_dm(notif["id"], notif["status"])
                     last_seen_id = notif["id"]
 
                 if consecutive_successes >= _POLL_CYCLES_BEFORE_STREAMING:

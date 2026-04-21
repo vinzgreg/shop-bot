@@ -83,6 +83,13 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 raw_message TEXT    NOT NULL,
                 timestamp   TEXT    NOT NULL
             );
+
+            -- Generic key/value store for small bits of bot state
+            -- (e.g. last processed Mastodon notification id).
+            CREATE TABLE IF NOT EXISTS kv (
+                key   TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
         """)
 
     logger.debug("Database schema ready")
@@ -341,6 +348,25 @@ def get_and_clear_undo(
             return None
         conn.execute("DELETE FROM undo_state WHERE user_handle = ?", (user_handle,))
     return row["action_type"], json.loads(row["action_data"])
+
+
+# ── Key/value state ───────────────────────────────────────────────────────────
+
+def get_kv(key: str, db_path: Path = DB_PATH) -> Optional[str]:
+    """Return the stored value for key, or None if not set."""
+    with _connection(db_path) as conn:
+        row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_kv(key: str, value: str, db_path: Path = DB_PATH) -> None:
+    """Insert or replace the value for key."""
+    with _connection(db_path) as conn:
+        conn.execute(
+            "INSERT INTO kv (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
 
 # ── Interaction log ───────────────────────────────────────────────────────────
