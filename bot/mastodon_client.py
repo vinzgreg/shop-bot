@@ -15,6 +15,8 @@ from mastodon import (
     MastodonNetworkError,
     StreamListener,
 )
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import ReadTimeout, Timeout
 
 from .config import Config
 
@@ -25,6 +27,12 @@ _POLL_INTERVAL = 30
 
 # Seconds to wait before retrying after an unexpected streaming error
 _STREAM_RETRY_DELAY = 60
+
+# Number of successful poll cycles before attempting to restore streaming
+_POLL_CYCLES_BEFORE_STREAMING = 10
+
+# Consecutive poll failures before logging an instance-connectivity error
+_POLL_FAILURE_THRESHOLD = 3
 
 # Per-request API timeout in seconds
 _API_TIMEOUT = 30
@@ -146,7 +154,8 @@ class MastodonClient:
                 self._api.stream_user(listener)
                 # If we reach here the stream ended cleanly — reconnect
                 logger.warning("Streaming ended unexpectedly; reconnecting")
-            except MastodonNetworkError:
+            except (MastodonNetworkError, ReadTimeout, Timeout,
+                    RequestsConnectionError, OSError):
                 logger.warning(
                     "Streaming connection lost; switching to polling fallback"
                 )
@@ -159,11 +168,12 @@ class MastodonClient:
 
     def _poll_loop(self, on_dm: Callable) -> None:
         """
-        Poll for new DM notifications.  Returns when streaming seems viable
-        again so the caller can switch back.
+        Poll for new DM notifications.  Returns after several consecutive
+        successful polls so the caller can attempt to restore streaming.
         """
         last_seen_id = None
         consecutive_failures = 0
+        consecutive_successes = 0
 
         while True:
             try:
@@ -172,6 +182,7 @@ class MastodonClient:
                     since_id=last_seen_id,
                 )
                 consecutive_failures = 0
+                consecutive_successes += 1
 
                 # Process oldest first
                 for notif in reversed(notifications):
@@ -184,23 +195,44 @@ class MastodonClient:
                     on_dm(status)
                     last_seen_id = notif["id"]
 
-                # After a successful poll, try to hand back to streaming
-                logger.info("Poll succeeded — attempting to restore streaming")
-                return
+                if consecutive_successes >= _POLL_CYCLES_BEFORE_STREAMING:
+                    logger.info(
+                        "Polling stable for %d cycles — attempting to restore streaming",
+                        consecutive_successes,
+                    )
+                    return
 
             except MastodonNetworkError:
                 consecutive_failures += 1
-                logger.warning(
-                    "Poll attempt %d failed (network); retrying in %ds",
-                    consecutive_failures,
-                    _POLL_INTERVAL,
-                )
+                consecutive_successes = 0
+                if consecutive_failures == _POLL_FAILURE_THRESHOLD:
+                    logger.error(
+                        "Cannot reach Mastodon instance — streaming and %d "
+                        "consecutive poll attempts failed. Instance may be down.",
+                        consecutive_failures,
+                    )
+                elif consecutive_failures < _POLL_FAILURE_THRESHOLD:
+                    logger.warning(
+                        "Poll attempt %d failed (network); retrying in %ds",
+                        consecutive_failures,
+                        _POLL_INTERVAL,
+                    )
+                # After the threshold, stay quiet to avoid log spam — the
+                # error has already been flagged.
             except Exception:
                 consecutive_failures += 1
-                logger.exception(
-                    "Unexpected poll error (attempt %d); retrying in %ds",
-                    consecutive_failures,
-                    _POLL_INTERVAL,
-                )
+                consecutive_successes = 0
+                if consecutive_failures == _POLL_FAILURE_THRESHOLD:
+                    logger.error(
+                        "Cannot reach Mastodon instance — streaming and %d "
+                        "consecutive poll attempts failed. Instance may be down.",
+                        consecutive_failures,
+                    )
+                else:
+                    logger.exception(
+                        "Unexpected poll error (attempt %d); retrying in %ds",
+                        consecutive_failures,
+                        _POLL_INTERVAL,
+                    )
 
             time.sleep(_POLL_INTERVAL)
