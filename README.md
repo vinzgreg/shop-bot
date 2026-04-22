@@ -53,6 +53,12 @@ Reminders are **one-shot** and fire as a **public post** on the bot account at t
 
 Every command keyword has a configurable alias (default: German). Both the English keyword and the alias are always accepted. See the `[aliases]` section in the config file.
 
+### Web UI
+
+A small web interface (`shop-web` service) lets you view, add, tick off, and adjust quantities of shopping list items in a browser. It shares the same SQLite database as the bot, so changes from the web and from Mastodon DMs stay in sync.
+
+Authentication is a single shared password; on successful login a signed session cookie is set with a 30-day lifetime. The container binds to `127.0.0.1:8080` only and is intended to sit behind an nginx reverse proxy that terminates TLS — see `nginx/shop.hever.de.conf.example` for a ready-to-use server block.
+
 ### Access control
 
 Set `access = "everyone"` to allow any Mastodon account to use the bot, or `access = "followers_only"` to restrict it to accounts that follow the bot.
@@ -110,6 +116,28 @@ Logs:
 docker compose logs -f
 ```
 
+### 5. (Optional) Enable the web UI
+
+The `shop-web` service requires two secrets, both in a `.env` file next to `docker-compose.yml`:
+
+```bash
+# Generate a random session signing key (one-off)
+python3 -c "import secrets; print('WEB_SECRET_KEY=' + secrets.token_urlsafe(48))" >> .env
+
+# Add the login password
+echo "WEB_PASSWORD=choose_a_strong_password" >> .env
+```
+
+Both variables are required — the container refuses to start without them. Changing `WEB_SECRET_KEY` invalidates all existing sessions (forces a re-login). The `.env` file is gitignored.
+
+Then bring up the web service:
+
+```bash
+docker compose up -d shop-web
+```
+
+For TLS termination via nginx, copy `nginx/shop.hever.de.conf.example` to `/etc/nginx/sites-available/<your-host>`, adjust `server_name`, run `certbot --nginx -d <your-host>`, and reload nginx.
+
 ---
 
 ## Configuration reference
@@ -131,6 +159,17 @@ All options are in `config/config.toml` (copy from `config.toml.example`).
 | `timezone` | `"Europe/Berlin"` | IANA timezone for scheduling and display |
 | `log_level` | `"INFO"` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `access` | `"everyone"` | `"everyone"` or `"followers_only"` |
+
+### `[web]`
+
+Used by the optional `shop-web` service. Both values can also be supplied via the `WEB_PASSWORD` and `WEB_SECRET_KEY` environment variables (preferred — keeps secrets out of `config.toml`). Environment variables take precedence over the config file.
+
+| Key | Default | Description |
+|---|---|---|
+| `password` | `""` | Shared login password for the web UI |
+| `port` | `8080` | Internal port the Flask app listens on |
+
+`WEB_SECRET_KEY` (used to sign the session cookie) has no `config.toml` equivalent — it must be set as an environment variable.
 
 ### `[aliases]`
 
