@@ -18,6 +18,23 @@
 
     h1 { font-size: 1.5rem; margin-bottom: 1.25rem; }
 
+    .header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+    .header h1 { margin-bottom: 0; }
+    .logout-form button {
+      background: none;
+      border: none;
+      color: #6b7280;
+      font-size: .85rem;
+      cursor: pointer;
+      padding: 0;
+    }
+    .logout-form button:hover { color: #1a1a1a; text-decoration: underline; }
+
     /* Add form — two-row layout on mobile, one row on wider screens */
     #add-form {
       display: grid;
@@ -129,7 +146,12 @@
   </style>
 </head>
 <body>
-  <h1>Einkaufsliste</h1>
+  <div class="header">
+    <h1>Einkaufsliste</h1>
+    <form class="logout-form" method="post" action="{{ url_for('logout') }}">
+      <button type="submit">Abmelden</button>
+    </form>
+  </div>
 
   <form id="add-form" autocomplete="off">
     <input type="text" id="new-name" placeholder="Artikel" required>
@@ -156,6 +178,11 @@
         headers: { 'Content-Type': 'application/json', ...opts.headers },
         ...opts,
       });
+      if (res.status === 401) {
+        // Session expired — bounce to login
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+        throw new Error('Sitzung abgelaufen');
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || res.statusText);

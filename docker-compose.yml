@@ -16,6 +16,11 @@ services:
       - ./config:/app/config:ro        # config.toml (read-only)
       - ./data/shop:/app/data/shop     # same SQLite database as the bot
     environment:
-      # Override the password here or set it in config.toml [web] section.
-      # Setting it here keeps the secret out of the config file.
+      # Both secrets are required.  Keep them in a .env file alongside this
+      # compose file (gitignored) instead of in config.toml.
+      #
+      # WEB_SECRET_KEY signs the session cookie — generate once with:
+      #   python -c 'import secrets; print(secrets.token_urlsafe(48))'
+      # Changing it invalidates all existing sessions.
       - WEB_PASSWORD=${WEB_PASSWORD:-}
+      - WEB_SECRET_KEY=${WEB_SECRET_KEY:-}

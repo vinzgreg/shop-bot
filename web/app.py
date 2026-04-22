@@ -1,19 +1,36 @@
 """
 Minimal Flask web UI for the shopping list.
 
-Authentication: HTTP Basic Auth, single shared password configured via
-WEB_PASSWORD environment variable (preferred) or [web] password in
-config.toml.  Intended to sit behind an nginx reverse proxy that
-terminates TLS.
+Authentication: cookie-based session.  The user POSTs the shared password
+to /login; on success a signed session cookie is set with a 30-day
+lifetime.  The cookie is HttpOnly, Secure (HTTPS only) and SameSite=Lax,
+which provides built-in CSRF protection for state-changing requests.
+
+Required environment variables:
+  WEB_PASSWORD     — shared login password
+  WEB_SECRET_KEY   — long random string used to sign the session cookie
+                     (generate with: python -c 'import secrets; print(secrets.token_urlsafe(48))')
+
+Intended to sit behind an nginx reverse proxy that terminates TLS and
+forwards X-Forwarded-Proto / X-Forwarded-Host.
 """
 
 import functools
 import logging
 import os
 import secrets
-from urllib.parse import urlparse
+from datetime import timedelta
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from bot.config import load_config
 from bot.database import (
@@ -28,14 +45,23 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# State-changing HTTP methods that require an Origin check (CSRF defence).
-_UNSAFE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
+# Trust X-Forwarded-Proto / X-Forwarded-Host from nginx so url_for() and
+# the Secure-cookie check see the original https scheme.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+app.config.update(
+    SECRET_KEY=os.environ.get("WEB_SECRET_KEY", ""),
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
+# ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def _get_password() -> str:
-    """Return the configured web password, or '' if none is configured."""
+    """Return the configured login password, or '' if none is configured."""
     if pw := os.environ.get("WEB_PASSWORD"):
         return pw
     try:
@@ -46,52 +72,50 @@ def _get_password() -> str:
     return cfg.web.password if cfg.web else ""
 
 
-def _unauthorized() -> Response:
-    return Response(
-        "Authentication required",
-        401,
-        {"WWW-Authenticate": 'Basic realm="Shopping List"'},
-    )
-
-
-def _origin_ok() -> bool:
-    """
-    CSRF defence: for state-changing requests, require that the Origin
-    (or Referer) header matches the Host header.  Browsers attach the
-    Origin header automatically to cross-origin non-GET requests.
-    """
-    if request.method not in _UNSAFE_METHODS:
-        return True
-    source = request.headers.get("Origin") or request.headers.get("Referer")
-    if not source:
-        return False
-    try:
-        source_host = urlparse(source).netloc
-    except ValueError:
-        return False
-    return bool(source_host) and source_host == request.host
-
-
 def require_auth(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        password = _get_password()
-        if not password:
-            logger.error("WEB_PASSWORD not configured — rejecting all requests")
-            return _unauthorized()
-        auth = request.authorization
-        if not auth or not auth.password or not secrets.compare_digest(
-            auth.password, password
-        ):
-            return _unauthorized()
-        if not _origin_ok():
-            logger.warning(
-                "Rejecting %s %s: Origin/Referer mismatch (host=%s)",
-                request.method, request.path, request.host,
-            )
-            return jsonify({"error": "cross-origin request blocked"}), 403
+        if not session.get("authed"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "not authenticated"}), 401
+            return redirect(url_for("login_form", next=request.path))
         return fn(*args, **kwargs)
     return wrapper
+
+
+# ── Login / logout ────────────────────────────────────────────────────────────
+
+@app.get("/login")
+def login_form():
+    if session.get("authed"):
+        return redirect(url_for("index"))
+    return render_template("login.html", error=None)
+
+
+@app.post("/login")
+def login_submit():
+    submitted = (request.form.get("password") or "").strip()
+    expected = _get_password()
+    if not expected:
+        logger.error("WEB_PASSWORD not configured — rejecting login")
+        return render_template("login.html", error="Server nicht konfiguriert"), 500
+    if not submitted or not secrets.compare_digest(submitted, expected):
+        logger.warning("Failed login attempt from %s", request.remote_addr)
+        return render_template("login.html", error="Falsches Passwort"), 401
+    session.clear()
+    session["authed"] = True
+    session.permanent = True
+    next_url = request.args.get("next") or url_for("index")
+    if not next_url.startswith("/"):
+        # Only allow same-app relative redirects
+        next_url = url_for("index")
+    return redirect(next_url)
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login_form"))
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
