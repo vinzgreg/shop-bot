@@ -28,6 +28,18 @@ _REMINDER_DATE = re.compile(
     re.DOTALL,
 )
 
+# Relative duration: "1h", "30m", "2h30m" — at least one of h or m required
+_REMINDER_DURATION = re.compile(
+    r"^((?:\d+)h(?:\d+m)?|(?:\d+)m)\s+(.+)$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# "tomorrow [HH:MM] <message>"
+_REMINDER_TOMORROW = re.compile(
+    r"^tomorrow(?:\s+(\d{2}:\d{2}))?\s+(.+)$",
+    re.DOTALL | re.IGNORECASE,
+)
+
 # Numeric range used in /remove: "2-4" → items 2, 3, 4.  Matches only purely
 # numeric bounds so names that happen to contain hyphens are left untouched.
 _REMOVE_RANGE = re.compile(r"^(\d+)\s*-\s*(\d+)$")
@@ -63,10 +75,11 @@ class ParsedCommand:
     remove_targets: list[str] = field(default_factory=list)
 
     # --- reminder fields ---
-    reminder_date: Optional[str] = None    # YYYY-MM-DD
-    reminder_time: Optional[str] = None    # HH:MM  (None → use default)
+    reminder_date: Optional[str] = None         # YYYY-MM-DD or "tomorrow"
+    reminder_time: Optional[str] = None         # HH:MM  (None → use default)
     reminder_message: Optional[str] = None
     reminder_number: Optional[int] = None
+    reminder_offset_minutes: Optional[int] = None  # duration-based: minutes from now
 
     # --- debugging ---
     raw_text: str = field(default="", repr=False)
@@ -226,6 +239,38 @@ def _parse_reminder(text: str, aliases) -> ParsedCommand:
                 )
             logger.debug("Invalid reminder delete target: %r", after)
             return ParsedCommand(command="unknown", raw_text=text)
+
+    # /reminder tomorrow [HH:MM] <message>
+    tomorrow_keywords = {"tomorrow", aliases.reminder_tomorrow.lower()}
+    for kw in tomorrow_keywords:
+        pattern = re.compile(
+            rf"^{re.escape(kw)}(?:\s+(\d{{2}}:\d{{2}}))?\s+(.+)$",
+            re.DOTALL | re.IGNORECASE,
+        )
+        m = pattern.match(rest)
+        if m:
+            return ParsedCommand(
+                command="reminder_add",
+                reminder_date="tomorrow",
+                reminder_time=m.group(1),   # None when no time was given
+                reminder_message=m.group(2).strip(),
+                raw_text=text,
+            )
+
+    # /reminder <duration> <message>  e.g. "1h", "30m", "2h30m"
+    m = _REMINDER_DURATION.match(rest)
+    if m:
+        duration_str = m.group(1).lower()
+        hours = int(h.group(1)) if (h := re.search(r"(\d+)h", duration_str)) else 0
+        mins  = int(n.group(1)) if (n := re.search(r"(\d+)m", duration_str)) else 0
+        offset = hours * 60 + mins
+        if offset > 0:
+            return ParsedCommand(
+                command="reminder_add",
+                reminder_offset_minutes=offset,
+                reminder_message=m.group(2).strip(),
+                raw_text=text,
+            )
 
     # /reminder YYYY-MM-DD [HH:MM] <message>
     m = _REMINDER_DATE.match(rest)

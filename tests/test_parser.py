@@ -205,6 +205,44 @@ class TestParseReminder:
         cmd = parse("/reminder nonsense", aliases)
         assert cmd.command == "unknown"
 
+    def test_reminder_tomorrow_no_time(self, aliases):
+        cmd = parse("/reminder tomorrow buy milk", aliases)
+        assert cmd.command == "reminder_add"
+        assert cmd.reminder_date == "tomorrow"
+        assert cmd.reminder_time is None
+        assert cmd.reminder_message == "buy milk"
+
+    def test_reminder_tomorrow_with_time(self, aliases):
+        cmd = parse("/reminder tomorrow 09:00 dentist", aliases)
+        assert cmd.command == "reminder_add"
+        assert cmd.reminder_date == "tomorrow"
+        assert cmd.reminder_time == "09:00"
+        assert cmd.reminder_message == "dentist"
+
+    def test_reminder_duration_hours(self, aliases):
+        cmd = parse("/reminder 2h call back", aliases)
+        assert cmd.command == "reminder_add"
+        assert cmd.reminder_offset_minutes == 120
+        assert cmd.reminder_message == "call back"
+
+    def test_reminder_duration_minutes(self, aliases):
+        cmd = parse("/reminder 30m check oven", aliases)
+        assert cmd.command == "reminder_add"
+        assert cmd.reminder_offset_minutes == 30
+        assert cmd.reminder_message == "check oven"
+
+    def test_reminder_duration_hours_and_minutes(self, aliases):
+        cmd = parse("/reminder 1h30m take medication", aliases)
+        assert cmd.command == "reminder_add"
+        assert cmd.reminder_offset_minutes == 90
+        assert cmd.reminder_message == "take medication"
+
+    def test_reminder_german_tomorrow(self, aliases):
+        cmd = parse("/erinnerung morgen Milch kaufen", aliases)
+        assert cmd.command == "reminder_add"
+        assert cmd.reminder_date == "tomorrow"
+        assert cmd.reminder_message == "Milch kaufen"
+
 
 class TestParseUndo:
     def test_undo(self, aliases):

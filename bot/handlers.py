@@ -8,7 +8,7 @@ messages so the bot never goes silent.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -184,17 +184,31 @@ def _reminder_add(cmd: ParsedCommand, user_handle: str, config: Config, db_path)
         logger.error("Unknown timezone in config: %s", config.bot.timezone)
         return f"Server misconfiguration: unknown timezone '{config.bot.timezone}'."
 
-    time_str = cmd.reminder_time or config.bot.default_reminder_time
+    now = datetime.now(tz)
 
-    try:
-        local_dt = datetime.strptime(f"{cmd.reminder_date} {time_str}", "%Y-%m-%d %H:%M")
-    except ValueError:
-        return (
-            f"Invalid date or time: '{cmd.reminder_date} {time_str}'. "
-            f"Use YYYY-MM-DD and HH:MM."
-        )
+    if cmd.reminder_offset_minutes is not None:
+        local_dt = now + timedelta(minutes=cmd.reminder_offset_minutes)
+        date_str = local_dt.strftime("%Y-%m-%d")
+        time_str = local_dt.strftime("%H:%M")
+    elif cmd.reminder_date == "tomorrow":
+        tomorrow = (now + timedelta(days=1)).date()
+        date_str = tomorrow.isoformat()
+        time_str = cmd.reminder_time or config.bot.default_reminder_time
+        try:
+            local_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+        except ValueError:
+            return f"Invalid time: '{time_str}'. Use HH:MM."
+    else:
+        time_str = cmd.reminder_time or config.bot.default_reminder_time
+        date_str = cmd.reminder_date
+        try:
+            local_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+        except ValueError:
+            return (
+                f"Invalid date or time: '{date_str} {time_str}'. "
+                f"Use YYYY-MM-DD and HH:MM."
+            )
 
-    local_dt = local_dt.replace(tzinfo=tz)
     utc_str = local_dt.astimezone(timezone.utc).isoformat()
 
     reminder_id = db.add_reminder(utc_str, cmd.reminder_message, user_handle, db_path)
@@ -202,9 +216,9 @@ def _reminder_add(cmd: ParsedCommand, user_handle: str, config: Config, db_path)
 
     logger.info(
         "@%s added reminder at %s %s: '%s'",
-        user_handle, cmd.reminder_date, time_str, cmd.reminder_message,
+        user_handle, date_str, time_str, cmd.reminder_message,
     )
-    return f"Reminder set for {cmd.reminder_date} {time_str}: {cmd.reminder_message}"
+    return f"Reminder set for {date_str} {time_str}: {cmd.reminder_message}"
 
 
 def _reminder_list(cmd: ParsedCommand, user_handle: str, config: Config, db_path) -> str:

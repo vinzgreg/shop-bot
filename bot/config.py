@@ -34,6 +34,7 @@ class AliasConfig:
     reminder_list: str = "liste"
     reminder_delete: str = "loesche"
     reminder_all: str = "alle"
+    reminder_tomorrow: str = "morgen"
     undo: str = "undo"
     help: str = "hilfe"
 
@@ -87,6 +88,7 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         reminder_list=a.get("reminder_list", "liste"),
         reminder_delete=a.get("reminder_delete", "loesche"),
         reminder_all=a.get("reminder_all", "alle"),
+        reminder_tomorrow=a.get("reminder_tomorrow", "morgen"),
         undo=a.get("undo", "undo"),
         help=a.get("help", "hilfe"),
     )
