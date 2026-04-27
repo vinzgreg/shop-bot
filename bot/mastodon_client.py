@@ -38,22 +38,25 @@ _POLL_FAILURE_THRESHOLD = 3
 _API_TIMEOUT = 30
 
 
-def _is_dm_for_us(notification: dict, bot_acct: str) -> bool:
-    """True iff this notification is a direct mention from someone other than us."""
+_ACCEPTED_VISIBILITIES = {"direct", "public", "unlisted"}
+
+
+def _is_mention_for_us(notification: dict, bot_acct: str) -> bool:
+    """True iff this notification is a mention (DM or public) from someone other than us."""
     if notification.get("type") != "mention":
         return False
     status = notification.get("status") or {}
-    if status.get("visibility") != "direct":
+    if status.get("visibility") not in _ACCEPTED_VISIBILITIES:
         return False
     sender = status.get("account", {}).get("acct")
     return sender is not None and sender != bot_acct
 
 
-class _DMStreamListener(StreamListener):
-    """Routes streaming notification events to the on_dm callback."""
+class _MentionStreamListener(StreamListener):
+    """Routes streaming notification events to the on_mention callback."""
 
-    def __init__(self, on_dm: Callable, bot_acct: str):
-        self._on_dm = on_dm
+    def __init__(self, on_mention: Callable, bot_acct: str):
+        self._on_mention = on_mention
         self._bot_acct = bot_acct
 
     def on_notification(self, notification) -> None:
@@ -63,9 +66,9 @@ class _DMStreamListener(StreamListener):
             (notification.get("status") or {}).get("visibility"),
             (notification.get("status") or {}).get("account", {}).get("acct"),
         )
-        if not _is_dm_for_us(notification, self._bot_acct):
+        if not _is_mention_for_us(notification, self._bot_acct):
             return
-        self._on_dm(notification["id"], notification["status"])
+        self._on_mention(notification["id"], notification["status"])
 
     def on_error(self, data) -> None:
         logger.error("Streaming error event received: %s", data)
@@ -145,6 +148,19 @@ class MastodonClient:
         except (MastodonNetworkError, MastodonAPIError):
             logger.exception("Failed to send DM to @%s", recipient_acct)
 
+    def send_public_reply(self, reply_to_id: int, recipient_acct: str, text: str) -> None:
+        """Reply publicly to a public/unlisted mention.  Failures are logged but not raised."""
+        content = f"@{recipient_acct} {text}"
+        try:
+            self._api.status_post(
+                content,
+                in_reply_to_id=reply_to_id,
+                visibility="public",
+            )
+            logger.debug("Public reply sent to @%s", recipient_acct)
+        except (MastodonNetworkError, MastodonAPIError):
+            logger.exception("Failed to send public reply to @%s", recipient_acct)
+
     def post_public(self, text: str) -> None:
         """
         Post a public toot.  Raises on failure so the scheduler can decide
@@ -162,14 +178,14 @@ class MastodonClient:
 
     def iter_dms_since(self, since_id: str) -> Iterator[tuple[str, dict]]:
         """
-        Yield (notification_id, status) for every DM newer than since_id,
+        Yield (notification_id, status) for every mention newer than since_id,
         oldest first.  Used to replay messages received while disconnected.
         """
         page = self._api.notifications(types=["mention"], since_id=since_id)
         notifs = self._api.fetch_remaining(page) if page else []
         # Mastodon returns newest-first; dispatch oldest-first.
         for n in reversed(notifs):
-            if not _is_dm_for_us(n, self._bot_acct):
+            if not _is_mention_for_us(n, self._bot_acct):
                 continue
             yield n["id"], n["status"]
 
@@ -190,7 +206,7 @@ class MastodonClient:
         while True:
             try:
                 logger.info("Starting streaming listener")
-                listener = _DMStreamListener(on_dm, self._bot_acct)
+                listener = _MentionStreamListener(on_dm, self._bot_acct)
                 # stream_user blocks until the connection drops
                 self._api.stream_user(listener)
                 # If we reach here the stream ended cleanly — reconnect
@@ -228,7 +244,7 @@ class MastodonClient:
 
                 # Process oldest first
                 for notif in reversed(notifications):
-                    if not _is_dm_for_us(notif, self._bot_acct):
+                    if not _is_mention_for_us(notif, self._bot_acct):
                         continue
                     on_dm(notif["id"], notif["status"])
                     last_seen_id = notif["id"]

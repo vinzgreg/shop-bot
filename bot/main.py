@@ -68,28 +68,31 @@ def run() -> None:
     # Reminder scheduler (background thread)
     scheduler = start_scheduler(client, DB_PATH)
 
-    # ── DM callback ───────────────────────────────────────────────────────────
+    # ── Mention callback (DMs and public posts) ───────────────────────────────
     def on_dm(notification_id: str, status: dict) -> None:
         sender_acct = status["account"]["acct"]
         account_id  = status["account"]["id"]
         status_id   = status["id"]
+        visibility  = status.get("visibility", "direct")
 
         # Mastodon delivers content as HTML; convert to plain text first.
         raw_html = status.get("content", "")
         plain    = strip_html(raw_html)
 
-        logger.info("DM from @%s: %r", sender_acct, plain[:120])
+        logger.info("Mention (visibility=%s) from @%s: %r", visibility, sender_acct, plain[:120])
         log_interaction(sender_acct, plain, DB_PATH)
+
+        def send_reply(text: str) -> None:
+            if visibility == "direct":
+                client.send_dm(status_id, sender_acct, text)
+            else:
+                client.send_public_reply(status_id, sender_acct, text)
 
         try:
             # Access control
             if not client.is_authorized(account_id):
                 logger.info("Rejecting unauthorised user @%s", sender_acct)
-                client.send_dm(
-                    status_id,
-                    sender_acct,
-                    "Sorry, you are not authorised to use this bot.",
-                )
+                send_reply("Sorry, you are not authorised to use this bot.")
                 return
 
             # Strip the @mention prefix, parse, execute, reply
@@ -97,7 +100,7 @@ def run() -> None:
             cmd     = parse(cleaned, config.aliases)
             reply   = handle(cmd, sender_acct, config, DB_PATH)
 
-            client.send_dm(status_id, sender_acct, reply)
+            send_reply(reply)
         finally:
             # Persist the high-water mark even if handling raised, so a
             # broken message can't permanently block backfill on restart.
@@ -129,7 +132,7 @@ def run() -> None:
             logger.info("Backfill complete — replayed %d DM(s)", replayed)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
-    logger.info("Bot ready — listening for DMs")
+    logger.info("Bot ready — listening for mentions")
     try:
         client.listen(
             on_dm,

@@ -143,6 +143,20 @@
 
     #empty-msg { color: #6b7280; font-style: italic; }
     #error-msg { color: #ef4444; font-size: .9rem; margin-bottom: .75rem; min-height: 1.2em; }
+
+    #undo-bar {
+      margin-bottom: .75rem;
+    }
+    #undo-btn {
+      padding: .4rem .9rem;
+      background: none;
+      border: 1px solid #9ca3af;
+      border-radius: 6px;
+      font-size: .9rem;
+      color: #374151;
+      cursor: pointer;
+    }
+    #undo-btn:hover { background: #f3f4f6; border-color: #6b7280; }
   </style>
 </head>
 <body>
@@ -160,6 +174,7 @@
   </form>
 
   <div id="error-msg"></div>
+  <div id="undo-bar" hidden><button id="undo-btn">↩ Rückgängig</button></div>
   <ul id="list"></ul>
   <p id="empty-msg" hidden>Die Einkaufsliste ist leer.</p>
 
@@ -167,6 +182,45 @@
     const listEl   = document.getElementById('list');
     const emptyMsg = document.getElementById('empty-msg');
     const errorMsg = document.getElementById('error-msg');
+    const undoBar  = document.getElementById('undo-bar');
+    const undoBtn  = document.getElementById('undo-btn');
+
+    let lastAction = null;
+
+    function setUndo(action) {
+      lastAction = action;
+      undoBar.hidden = false;
+    }
+
+    function clearUndo() {
+      lastAction = null;
+      undoBar.hidden = true;
+    }
+
+    undoBtn.addEventListener('click', async () => {
+      if (!lastAction) return;
+      const action = lastAction;
+      clearUndo();
+      try {
+        if (action.type === 'add') {
+          await apiFetch(`/api/items/${action.id}`, { method: 'DELETE' });
+        } else if (action.type === 'delete') {
+          await apiFetch('/api/items', {
+            method: 'POST',
+            body: JSON.stringify({ name: action.item.name, quantity: action.item.quantity, unit: action.item.quantity_unit }),
+          });
+        } else if (action.type === 'qty_change') {
+          await apiFetch(`/api/items/${action.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ quantity: action.oldQty }),
+          });
+        }
+        await loadList();
+      } catch (e) {
+        showError(e.message);
+        setUndo(action);
+      }
+    });
 
     function showError(msg) {
       errorMsg.textContent = msg;
@@ -236,11 +290,13 @@
         minusBtn.addEventListener('click', async () => {
           const newQty = item.quantity - 1;
           if (newQty < 1) return;
+          const oldQty = item.quantity;
           try {
             await apiFetch(`/api/items/${item.id}`, {
               method: 'PATCH',
               body: JSON.stringify({ quantity: newQty }),
             });
+            setUndo({ type: 'qty_change', id: item.id, oldQty });
             item.quantity = newQty;
             qtyDisplay.textContent = formatQty(item);
           } catch (e) { showError(e.message); }
@@ -248,11 +304,13 @@
 
         plusBtn.addEventListener('click', async () => {
           const newQty = item.quantity + 1;
+          const oldQty = item.quantity;
           try {
             await apiFetch(`/api/items/${item.id}`, {
               method: 'PATCH',
               body: JSON.stringify({ quantity: newQty }),
             });
+            setUndo({ type: 'qty_change', id: item.id, oldQty });
             item.quantity = newQty;
             qtyDisplay.textContent = formatQty(item);
           } catch (e) { showError(e.message); }
@@ -268,6 +326,7 @@
       tickBtn.addEventListener('click', async () => {
         try {
           await apiFetch(`/api/items/${item.id}`, { method: 'DELETE' });
+          setUndo({ type: 'delete', item: { ...item } });
           li.remove();
           checkEmpty();
         } catch (e) { showError(e.message); }
@@ -280,6 +339,7 @@
       delBtn.addEventListener('click', async () => {
         try {
           await apiFetch(`/api/items/${item.id}`, { method: 'DELETE' });
+          setUndo({ type: 'delete', item: { ...item } });
           li.remove();
           checkEmpty();
         } catch (e) { showError(e.message); }
@@ -293,12 +353,13 @@
       emptyMsg.hidden = listEl.children.length > 0;
     }
 
-    async function loadList() {
+    async function loadList(preserveUndo = false) {
       try {
         const items = await apiFetch('/api/items');
         listEl.innerHTML = '';
         items.forEach(item => listEl.appendChild(renderItem(item)));
         checkEmpty();
+        if (!preserveUndo) clearUndo();
       } catch (e) { showError('Laden fehlgeschlagen: ' + e.message); }
     }
 
@@ -308,13 +369,14 @@
       const { quantity, unit } = parseQty(document.getElementById('new-qty').value);
       if (!name) return;
       try {
-        await apiFetch('/api/items', {
+        const result = await apiFetch('/api/items', {
           method: 'POST',
           body: JSON.stringify({ name, quantity, unit }),
         });
+        setUndo({ type: 'add', id: result.id });
         document.getElementById('new-name').value = '';
         document.getElementById('new-qty').value = '';
-        await loadList();
+        await loadList(true);
       } catch (e) { showError(e.message); }
     });
 
