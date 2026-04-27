@@ -135,9 +135,18 @@ class MastodonClient:
 
     # ── Posting ────────────────────────────────────────────────────────────
 
+    _MAX_CHARS = 500
+
+    def _build_content(self, recipient_acct: str, text: str) -> str:
+        prefix = f"@{recipient_acct} "
+        limit = self._MAX_CHARS - len(prefix)
+        if len(text) > limit:
+            text = text[: limit - 1] + "…"
+        return prefix + text
+
     def send_dm(self, reply_to_id: int, recipient_acct: str, text: str) -> None:
         """Reply to a DM.  Failures are logged but not raised."""
-        content = f"@{recipient_acct} {text}"
+        content = self._build_content(recipient_acct, text)
         try:
             self._api.status_post(
                 content,
@@ -150,7 +159,7 @@ class MastodonClient:
 
     def send_public_reply(self, reply_to_id: int, recipient_acct: str, text: str) -> None:
         """Reply publicly to a public/unlisted mention.  Failures are logged but not raised."""
-        content = f"@{recipient_acct} {text}"
+        content = self._build_content(recipient_acct, text)
         try:
             self._api.status_post(
                 content,
